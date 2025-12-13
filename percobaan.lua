@@ -1669,7 +1669,6 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
-        Window:OnDestroy(resetAll)
     end
 end
 
