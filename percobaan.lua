@@ -1599,7 +1599,12 @@ local function createMainUI()
             notifyUI("Fishing Clean", "Fishing features dibersihkan.", 3)
         end })
 
-                -- FARM TAB (original)
+
+        --bring & teleport test
+        bringTab:Paragraph({ Title = "Bring Item", Desc = "Membawa item ke posisi player.", Color = "Grey" })
+        teleportTab:Paragraph({ Title = "Teleport", Desc = "Teleport ke lokasi tertentu.", Color = "Grey" })
+
+        -- FARM TAB (original)
         farmTab:Toggle({ Title = "Auto Crockpot (Carrot + Corn)", Icon = "flame", Default = false, Callback = function(state)
             if scriptDisabled then return end
             if state then
