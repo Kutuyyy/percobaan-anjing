@@ -22,6 +22,15 @@ local LocalPlayer = Players.LocalPlayer
 ---------------------------------------------------------
 -- ANTI AFK (EARLY-SAFE INIT)
 ---------------------------------------------------------
+local function initAntiAFK()
+    LocalPlayer.Idled:Connect(function()
+        if scriptDisabled then return end
+        if not AntiAFKEnabled then return end
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+end
+
 initAntiAFK()
 
 ---------------------------------------------------------
@@ -1110,7 +1119,7 @@ local function startScrapLoop()
 end
 
 ---------------------------------------------------------
--- GODMODE & ANTI AFK
+-- GODMODE
 ---------------------------------------------------------
 local function startGodmodeLoop()
     task.spawn(function()
@@ -1125,14 +1134,6 @@ local function startGodmodeLoop()
             end
             task.wait(8)
         end
-    end)
-end
-local function initAntiAFK()
-    LocalPlayer.Idled:Connect(function()
-        if scriptDisabled then return end
-        if not AntiAFKEnabled then return end
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
     end)
 end
 
