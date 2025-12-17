@@ -481,6 +481,153 @@ local function teleportToCFrame(cf)
     hrp.CFrame = safeCF
 end
 
+---------------------------------------------------------
+-- BRING ITEM CORE (HUB VERSION)
+---------------------------------------------------------
+
+-- Cache Scrapper target (dipakai Workbench)
+local ScrapperTarget = nil
+local function getScrapperTarget()
+    if ScrapperTarget and ScrapperTarget.Parent then
+        return ScrapperTarget
+    end
+
+    local map = Workspace:FindFirstChild("Map")
+    local camp = map and map:FindFirstChild("Campground")
+    local scrapper = camp and camp:FindFirstChild("Scrapper")
+    local movers = scrapper and scrapper:FindFirstChild("Movers")
+    local right = movers and movers:FindFirstChild("Right")
+    local grinder = right and right:FindFirstChild("GrindersRight")
+
+    if grinder and grinder:IsA("BasePart") then
+        ScrapperTarget = grinder
+        return grinder
+    end
+
+    return nil
+end
+
+-- Target posisi drop
+local function getBringTargetPosition(location)
+    local hrp = getRoot()
+    if not hrp then return nil end
+
+    if location == "Player" then
+        return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
+
+    elseif location == "Workbench" then
+        local s = getScrapperTarget()
+        if s then
+            return s.Position + Vector3.new(0, BringHeight, 0)
+        end
+
+    elseif location == "Fire" then
+        local fire = Workspace:FindFirstChild("Map")
+            and Workspace.Map:FindFirstChild("Campground")
+            and Workspace.Map.Campground:FindFirstChild("MainFire")
+            and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
+
+        if fire then
+            return fire.Position + Vector3.new(0, BringHeight, 0)
+        end
+    end
+
+    -- fallback aman
+    return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
+end
+
+-- Drop melingkar biar rapi & anti stuck
+local function getBringDropCFrame(basePos, index)
+    local angle = (index - 1) * (math.pi * 2 / 12)
+    local radius = 3
+
+    return CFrame.new(
+        basePos + Vector3.new(
+            math.cos(angle) * radius,
+            0,
+            math.sin(angle) * radius
+        )
+    )
+end
+
+-- BRING CORE FUNCTION (dipakai semua section)
+function bringItems(sectionItemList, selectedItems, location)
+    if scriptDisabled then return end
+    if not ItemsFolder then
+        notifyUI("Bring Item", "Items folder belum siap.", 4, "alert-triangle")
+        return
+    end
+
+    local targetPos = getBringTargetPosition(location)
+    if not targetPos then
+        notifyUI("Bring Item", "Target posisi tidak ditemukan.", 4, "alert-triangle")
+        return
+    end
+
+    -- Resolve item yang diinginkan
+    local wantedNames = {}
+
+    if table.find(selectedItems, "All") then
+        for _, name in ipairs(sectionItemList) do
+            if name ~= "All" then
+                table.insert(wantedNames, name)
+            end
+        end
+    else
+        wantedNames = selectedItems
+    end
+
+    -- Scan item
+    local candidates = {}
+    for _, item in ipairs(ItemsFolder:GetChildren()) do
+        if item:IsA("Model")
+            and item.PrimaryPart
+            and table.find(wantedNames, item.Name)
+        then
+            table.insert(candidates, item)
+        end
+    end
+
+    if #candidates == 0 then
+        notifyUI("Bring Item", "Item tidak ditemukan.", 4, "search")
+        return
+    end
+
+    notifyUI(
+        "Bring Item",
+        string.format("%d item → %s", #candidates, tostring(location)),
+        5,
+        "zap"
+    )
+
+    -- Eksekusi bring
+    for i, item in ipairs(candidates) do
+        if scriptDisabled then break end
+        if not item or not item.Parent then continue end
+
+        pcall(function()
+            if RequestStartDragging then
+                RequestStartDragging:FireServer(item)
+            end
+        end)
+
+        task.wait(0.03)
+
+        pcall(function()
+            item:PivotTo(getBringDropCFrame(targetPos, i))
+        end)
+
+        task.wait(0.03)
+
+        pcall(function()
+            if RequestStopDragging then
+                RequestStopDragging:FireServer(item)
+            end
+        end)
+
+        task.wait(0.02)
+    end
+end
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
