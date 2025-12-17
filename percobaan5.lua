@@ -365,17 +365,6 @@ local function startMiniHudLoop()
         end
     end)
 end
----------------------------------------------------------
--- TELEPORT CORE
----------------------------------------------------------
-local function teleportToCFrame(cf)
-    if not cf then
-        notifyUI("Error", "Lokasi tidak ditemukan!", 4, "alert-triangle")
-        return
-    end
-    rootPart.CFrame = cf + Vector3.new(0,4,0)
-    notifyUI("Teleport!", "Berhasil teleport!", 4, "navigation")
-end
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
