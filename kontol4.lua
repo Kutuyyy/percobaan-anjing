@@ -19,6 +19,25 @@ local VirtualUser          = game:GetService("VirtualUser")
 -- Player
 local LocalPlayer = Players.LocalPlayer
 
+-- JANGAN ambil Character di global
+local function getCharacter()
+    return LocalPlayer.Character
+end
+
+local function getHumanoidRootPart()
+    local char = getCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getRoot()
+    return getHumanoidRootPart()
+end
+
+local function getHumanoid()
+    local char = getCharacter()
+    return char and char:FindFirstChild("Humanoid")
+end
+
 ---------------------------------------------------------
 -- ANTI AFK (EARLY-SAFE INIT)
 ---------------------------------------------------------
@@ -202,6 +221,9 @@ local fishingLoopThread = nil
 local Window
 local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
 local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
+
+local selectedLocation = "Player"
+local BringHeight = 20
 
 local scriptStartTime = os.clock()
 local currentFPS = 0
@@ -454,32 +476,13 @@ end
 -- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
 ---------------------------------------------------------
 local function teleportToCFrame(cf)
-    if scriptDisabled then return end
-    if not cf or typeof(cf) ~= "CFrame" then
-        warn("[Teleport] CFrame tidak valid.")
-        return
-    end
+    if not cf then return end
+    local hrp = getHumanoidRootPart()
+    if not hrp then return end
 
-    local char = LocalPlayer.Character
-    if not char then
-        warn("[Teleport] Character belum siap.")
-        return
-    end
-
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        warn("[Teleport] HumanoidRootPart tidak ditemukan.")
-        return
-    end
-
-    -- Anti stuck
-    local safeCF = cf * CFrame.new(0, 3, 0)
-
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
-
-    hrp.CFrame = safeCF
+    hrp.CFrame = cf + Vector3.new(0,4,0)
 end
+
 
 ---------------------------------------------------------
 -- BRING ITEM CORE (HUB VERSION)
@@ -509,7 +512,7 @@ end
 
 -- Target posisi drop
 local function getBringTargetPosition(location)
-    local hrp = getRoot()
+    local hrp = getHumanoidRootPart()
     if not hrp then return nil end
 
     if location == "Player" then
@@ -624,25 +627,14 @@ function bringItems(sectionItemList, selectedItems, location)
                 RequestStopDragging:FireServer(item)
             end
         end)
-
-        task.wait(0.02)
     end
 end
+
+
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
 ---------------------------------------------------------
-local function getCharacter()
-    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-end
-local function getHumanoid()
-    local char = getCharacter()
-    return char and char:FindFirstChild("Humanoid")
-end
-local function getRoot()
-    local char = getCharacter()
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
 local function zeroVelocities(part)
     if part and part:IsA("BasePart") then
         pcall(function()
@@ -655,11 +647,27 @@ local function applyFOV()
     if fovEnabled then Camera.FieldOfView = fovValue else Camera.FieldOfView = defaultFOV end
 end
 local function applyWalkspeed()
-    if humanoid and walkEnabled then humanoid.WalkSpeed = math.clamp(walkSpeedValue, 16, 200) else if humanoid then humanoid.WalkSpeed = defaultWalkSpeed end end
+    local h = getHumanoid()
+    if not h then return end
+
+    if walkEnabled then
+        h.WalkSpeed = math.clamp(walkSpeedValue, 16, 200)
+    else
+        h.WalkSpeed = defaultWalkSpeed
+    end
 end
+
 local function applyHipHeight()
-    if humanoid and hipEnabled then humanoid.HipHeight = hipValue else if humanoid then humanoid.HipHeight = defaultHipHeight end end
+    local h = getHumanoid()
+    if not h then return end
+
+    if hipEnabled then
+        h.HipHeight = hipValue
+    else
+        h.HipHeight = defaultHipHeight
+    end
 end
+
 local function updateNoclipConnection()
     local should = (noclipManualEnabled or flyEnabled)
     if should and not noclipConn then
@@ -692,20 +700,35 @@ local function setVisibility(on)
     end
 end
 local function playIdleAnimation()
-    if idleTrack then idleTrack:Stop() end
+    if idleTrack then
+        idleTrack:Stop()
+        idleTrack = nil
+    end
+
+    local h = getHumanoid()
+    if not h then return end
+
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://180435571"
-    idleTrack = humanoid:LoadAnimation(anim)
+
+    idleTrack = h:LoadAnimation(anim)
     idleTrack.Priority = Enum.AnimationPriority.Core
     idleTrack.Looped = true
     idleTrack:Play()
+
+    h.PlatformStand = true
 end
+
 local function startFly()
     if flyEnabled or scriptDisabled then return end
+
     local char = getCharacter()
-    rootPart = getRoot()
+    local rootPart = getRoot()
     if not char or not rootPart then return end
+
     flyEnabled = true
+    rootPart.Anchored = true
+
     if next(originalTransparency) == nil then
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") or (part:IsA("MeshPart") and part.Name == "Handle") then
@@ -713,56 +736,88 @@ local function startFly()
             end
         end
     end
+
     setVisibility(false)
-    rootPart.Anchored = true
-    humanoid.PlatformStand = true
-    for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
+
+    local h = getHumanoid()
+    if h then h.PlatformStand = true end
+
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
+    end
+
     playIdleAnimation()
     updateNoclipConnection()
+
     flyConn = RunService.RenderStepped:Connect(function(dt)
+        local rootPart = getRoot()
         if not flyEnabled or not rootPart then stopFly(); return end
-        local move = Vector3.new(0,0,0)
+
+        local move = Vector3.zero
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.yAxis end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.yAxis end
+
         if move.Magnitude > 0 then
-            move = move.Unit * math.clamp(flySpeedValue, 16, 200) * dt
-            rootPart.CFrame += move
+            rootPart.CFrame += move.Unit * math.clamp(flySpeedValue, 16, 200) * dt
         end
+
         rootPart.CFrame = CFrame.new(rootPart.Position) * Camera.CFrame.Rotation
         zeroVelocities(rootPart)
     end)
+
     notifyUI("Fly ON", "Ultimate Stealth Fly aktif!", 3, "plane")
 end
+
 local function stopFly()
     if not flyEnabled then return end
     flyEnabled = false
+
     if flyConn then flyConn:Disconnect(); flyConn = nil end
+
     local char = getCharacter()
-    rootPart = getRoot()
+    local rootPart = getRoot()
+    if not char or not rootPart then return end
+
     if idleTrack then idleTrack:Stop(); idleTrack = nil end
-    humanoid.PlatformStand = false
+
+    local h = getHumanoid()
+    if h then h.PlatformStand = false end
+
     setVisibility(false)
+
     local targetCFrame = rootPart.CFrame
+
     local bp = Instance.new("BodyPosition")
     bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
     bp.P = 30000
     bp.Position = targetCFrame.Position
     bp.Parent = rootPart
+
     local bg = Instance.new("BodyGyro")
     bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
     bg.P = 30000
     bg.CFrame = targetCFrame
     bg.Parent = rootPart
+
     rootPart.Anchored = false
-    for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end
-    task.delay(0.1, function() if bp and bp.Parent then bp:Destroy() end if bg and bg.Parent then bg:Destroy() end end)
+
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = true end
+    end
+
+    task.delay(0.1, function()
+        if bp.Parent then bp:Destroy() end
+        if bg.Parent then bg:Destroy() end
+    end)
+
     updateNoclipConnection()
     notifyUI("Fly OFF", "Fly dimatikan.", 3, "plane")
 end
+
 local function startTPWalk()
     if tpWalkEnabled or scriptDisabled then return end
     tpWalkEnabled = true
@@ -1123,7 +1178,9 @@ end
 local function collectCookCandidates(basePart, targetSet, maxCount)
     local best = {}
     if not ItemsFolder then return {} end
+    if not ItemsFolder then return end
     for _, item in ipairs(ItemsFolder:GetChildren()) do
+
         if item:IsA("Model")
             and item.PrimaryPart
             and targetSet[item.Name]
@@ -2251,21 +2308,18 @@ startGodmodeLoop()
 ---------------------------------------------------------
 -- INIT
 ---------------------------------------------------------
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    humanoid = char:WaitForChild("Humanoid")
-    rootPart = char:WaitForChild("HumanoidRootPart")
-    defaultWalkSpeed = humanoid.WalkSpeed
-    defaultHipHeight = humanoid.HipHeight
+local function applyLocalPlayerState()
     applyWalkspeed()
     applyHipHeight()
     applyFOV()
-    if flyEnabled then task.delay(0.2, startFly) end
-end)
+
+    if flyEnabled then
+        task.delay(0.15, startFly)
+    end
+end
+
 if LocalPlayer.Character then
-    humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
-    rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if humanoid then defaultWalkSpeed = humanoid.WalkSpeed; defaultHipHeight = humanoid.HipHeight end
+    applyLocalPlayerState()
 end
 
 print("[PapiDimz] HUB Loaded - All-in-One")
