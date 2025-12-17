@@ -15,6 +15,7 @@ local Lighting = game:GetService("Lighting")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")  -- Jika ingin pakai nama sama seperti solo.lua
 
 local Camera = Workspace.CurrentCamera
 ---------------------------------------------------------
@@ -374,7 +375,7 @@ local function teleportToCFrame(cf)
         WindUI:Notify({Title="Error", Content="Lokasi tidak ditemukan!", Icon="alert-triangle"})
         return
     end
-    rootPart.CFrame = cf + Vector3.new(0,4,0)
+    HumanoidRootPart.CFrame = cf + Vector3.new(0,4,0)
     WindUI:Notify({Title="Teleport!", Content="Berhasil teleport!", Icon="navigation", Duration=4})
 end
 
