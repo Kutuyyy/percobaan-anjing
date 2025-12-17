@@ -14,6 +14,8 @@ local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+
 local Camera = Workspace.CurrentCamera
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
@@ -164,7 +166,7 @@ local MAX_RECENT_SECS = 5
 local fishingLoopThread = nil
 -- UI & HUD
 local Window
-local mainTab, localTab, fishingTab, bringTab, teleportTab, farmTab, utilTab, nightTab, webhookTab, healthTab
+local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
 local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
 
 local scriptStartTime = os.clock()
@@ -1514,8 +1516,8 @@ local function createMainUI()
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
-        bringTab = Window:Tab({Title = "Bring Item", Icon = "hand"})
-        teleportTab = Window:Tab({Title = "Teleport", Icon = "navigation"})
+        BringTab = Window:Tab({Title = "Bring Item", Icon = "hand"})
+        TeleportTab = Window:Tab({Title = "Teleport", Icon = "navigation"})
         farmTab = Window:Tab({ Title = "Farm", Icon = "chef-hat" })
         utilTab = Window:Tab({ Title = "Tools", Icon = "wrench" })
         nightTab = Window:Tab({ Title = "Night", Icon = "moon" })
@@ -1524,6 +1526,225 @@ local function createMainUI()
     end
 
     if WindUI and mainTab then
+        -- ==============================================
+        -- Teleport Tab
+        -- ==============================================
+        -- Lost Child (seperti sebelumnya)
+        local lostChildSec = TeleportTab:Section({Title = "Teleport Lost Child", Icon = "baby", Collapsible = true, DefaultOpen = true})
+        local childOptions = {"DinoKid", "KoalaKid", "KrakenKid", "SquidKid"}
+        local selectedChild = "DinoKid"
+        lostChildSec:Dropdown({Title = "Select Child", Values = childOptions, Value = "DinoKid", Callback = function(v) selectedChild = v end})
+        lostChildSec:Button({
+            Title = "Teleport To Child",
+            Callback = function()
+                local hrp = nil
+                if selectedChild == "DinoKid" then
+                    hrp = Workspace.Characters:FindFirstChild("Lost Child") and Workspace.Characters["Lost Child"]:FindFirstChild("HumanoidRootPart")
+                elseif selectedChild == "KoalaKid" then
+                    hrp = Workspace.Characters:FindFirstChild("Lost Child4") and Workspace.Characters["Lost Child4"]:FindFirstChild("HumanoidRootPart")
+                elseif selectedChild == "KrakenKid" then
+                    hrp = Workspace.Characters:FindFirstChild("Lost Child2") and Workspace.Characters["Lost Child2"]:FindFirstChild("HumanoidRootPart")
+                elseif selectedChild == "SquidKid" then
+                    hrp = Workspace.Characters:FindFirstChild("Lost Child3") and Workspace.Characters["Lost Child3"]:FindFirstChild("HumanoidRootPart")
+                end
+                if hrp then
+                    teleportToCFrame(hrp.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content=selectedChild.." tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Structure Teleport (BARU!)
+        local structureSec = TeleportTab:Section({
+            Title = "Structure Teleport",
+            Icon = "castle",            -- Icon bangunan / structure
+            Collapsible = true,
+            DefaultOpen = false
+        })
+
+        -- Teleport to Camp (ke Fire)
+        structureSec:Button({
+            Title = "Teleport to Camp",
+            Callback = function()
+                local firePath = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Campground")
+                    and Workspace.Map.Campground:FindFirstChild("MainFire")
+                    and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
+                if firePath then
+                    teleportToCFrame(firePath.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Camp (Fire) tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Cultist Generator Base (asumsi path dari game, sesuaikan kalau ada info lebih)
+        structureSec:Button({
+            Title = "Teleport to Cultist Generator Base",
+            Callback = function()
+                -- Contoh path umum, sesuaikan kalau tahu exact
+                local cultistBase = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Landmarks")
+                    and Workspace.Map.Landmarks:FindFirstChild("CultistGenerator")
+                if cultistBase and cultistBase.PrimaryPart then
+                    teleportToCFrame(cultistBase.PrimaryPart.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Cultist Generator Base tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Stronghold (prioritas Diamond Chest kalau ada)
+        structureSec:Button({
+            Title = "Teleport to Stronghold",
+            Callback = function()
+                local diamondChest = Workspace:FindFirstChild("Items")
+                    and Workspace.Items:FindFirstChild("Stronghold Diamond Chest")
+                    and Workspace.Items["Stronghold Diamond Chest"]:FindFirstChild("ChestLid")
+                    and Workspace.Items["Stronghold Diamond Chest"].ChestLid:FindFirstChild("Meshes/diamondchest_Cube.005")
+                if diamondChest then
+                    teleportToCFrame(diamondChest.CFrame)
+                    return
+                end
+
+                local sign = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Landmarks")
+                    and Workspace.Map.Landmarks:FindFirstChild("Stronghold")
+                    and Workspace.Map.Landmarks.Stronghold:FindFirstChild("Building")
+                    and Workspace.Map.Landmarks.Stronghold.Building:FindFirstChild("Sign")
+                    and Workspace.Map.Landmarks.Stronghold.Building.Sign:FindFirstChild("Main")
+                if sign then
+                    teleportToCFrame(sign.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Stronghold tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Stronghold Diamond Chest (pisah button)
+        structureSec:Button({
+            Title = "Teleport to Stronghold Diamond Chest",
+            Callback = function()
+                local diamondChest = Workspace:FindFirstChild("Items")
+                    and Workspace.Items:FindFirstChild("Stronghold Diamond Chest")
+                    and Workspace.Items["Stronghold Diamond Chest"]:FindFirstChild("ChestLid")
+                    and Workspace.Items["Stronghold Diamond Chest"].ChestLid:FindFirstChild("Meshes/diamondchest_Cube.005")
+                if diamondChest then
+                    teleportToCFrame(diamondChest.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Stronghold Diamond Chest tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Caravan
+        structureSec:Button({
+            Title = "Teleport to Caravan",
+            Callback = function()
+                local caravan = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Landmarks")
+                    and Workspace.Map.Landmarks:FindFirstChild("Caravan")
+                if caravan and caravan.PrimaryPart then
+                    teleportToCFrame(caravan.PrimaryPart.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Caravan tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Fairy
+        structureSec:Button({
+            Title = "Teleport to Fairy",
+            Callback = function()
+                local fairyHRP = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Landmarks")
+                    and Workspace.Map.Landmarks:FindFirstChild("Fairy House")
+                    and Workspace.Map.Landmarks["Fairy House"]:FindFirstChild("Fairy")
+                    and Workspace.Map.Landmarks["Fairy House"].Fairy:FindFirstChild("HumanoidRootPart")
+                if fairyHRP then
+                    teleportToCFrame(fairyHRP.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Fairy tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- Teleport to Anvil
+        structureSec:Button({
+            Title = "Teleport to Anvil",
+            Callback = function()
+                local anvil = Workspace:FindFirstChild("Map")
+                    and Workspace.Map:FindFirstChild("Landmarks")
+                    and Workspace.Map.Landmarks:FindFirstChild("ToolWorkshop")
+                    and Workspace.Map.Landmarks.ToolWorkshop:FindFirstChild("Functional")
+                    and Workspace.Map.Landmarks.ToolWorkshop.Functional:FindFirstChild("ToolBench")
+                    and Workspace.Map.Landmarks.ToolWorkshop.Functional.ToolBench:FindFirstChild("Hammer")
+                if anvil then
+                    teleportToCFrame(anvil.CFrame)
+                else
+                    WindUI:Notify({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
+                end
+            end
+        })
+
+        -- ==============================================
+        -- Bring Item Tab (tetap sama)
+        -- ==============================================
+        local settingSec = BringTab:Section({Title = "Bring Setting", Icon = "settings", Collapsible = true, DefaultOpen = true})
+        settingSec:Dropdown({Title = "Location", Desc = "Player / Workbench (Scrapper) / Fire", Values = {"Player", "Workbench", "Fire"}, Value = "Player", Callback = function(v) selectedLocation = v end})
+        settingSec:Input({Title = "Bring Height", Placeholder = "20", Default = "20", Numeric = true, Callback = function(v) BringHeight = tonumber(v) or 20 end})
+
+        local cultistSec = BringTab:Section({Title = "Bring Cultist", Icon = "skull", Collapsible = true})
+        local cultistList = {"All", "Crossbow Cultist", "Cultist"}
+        local selCultist = {"All"}
+        cultistSec:Dropdown({Title="Pilih Cultist", Values=cultistList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selCultist=o or {"All"} end})
+        cultistSec:Button({Title="Bring Cultist", Callback=function() bringItems(cultistList, selCultist, selectedLocation) end})
+
+        local meteorSec = BringTab:Section({Title = "Bring Meteor Items", Icon = "zap", Collapsible = true})
+        local meteorList = {"All", "Raw Obsidiron Ore", "Gold Shard", "Meteor Shard", "Scalding Obsidiron Ingot"}
+        local selMeteor = {"All"}
+        meteorSec:Dropdown({Title="Pilih Item", Values=meteorList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selMeteor=o or {"All"} end})
+        meteorSec:Button({Title="Bring Meteor", Callback=function() bringItems(meteorList, selMeteor, selectedLocation) end})
+
+        local fuelSec = BringTab:Section({Title = "Fuels", Icon = "flame", Collapsible = true})
+        local fuelList = {"All", "Log", "Coal", "Chair", "Fuel Canister", "Oil Barrel"}
+        local selFuel = {"All"}
+        fuelSec:Dropdown({Title="Pilih Fuel", Values=fuelList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFuel=o or {"All"} end})
+        fuelSec:Button({Title="Bring Fuels", Callback=function() bringItems(fuelList, selFuel, selectedLocation) end})
+        fuelSec:Button({Title="Bring Logs Only", Callback=function() bringItems(fuelList, {"Log"}, selectedLocation) end})
+
+        local foodSec = BringTab:Section({Title = "Food", Icon = "drumstick", Collapsible = true})
+        local foodList = {"All", "Sweet Potato", "Stuffing", "Turkey Leg", "Carrot", "Pumkin", "Mackerel", "Salmon", "Swordfish", "Berry", "Ribs", "Stew", "Steak Dinner", "Morsel", "Steak", "Corn", "Cooked Morsel", "Cooked Steak", "Chilli", "Apple", "Cake"}
+        local selFood = {"All"}
+        foodSec:Dropdown({Title="Pilih Food", Values=foodList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFood=o or {"All"} end})
+        foodSec:Button({Title="Bring Food", Callback=function() bringItems(foodList, selFood, selectedLocation) end})
+
+        local healSec = BringTab:Section({Title = "Healing", Icon = "heart", Collapsible = true})
+        local healList = {"All", "Medkit", "Bandage"}
+        local selHeal = {"All"}
+        healSec:Dropdown({Title="Pilih Healing", Values=healList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selHeal=o or {"All"} end})
+        healSec:Button({Title="Bring Healing", Callback=function() bringItems(healList, selHeal, selectedLocation) end})
+
+        local gearSec = BringTab:Section({Title = "Gears (Scrap)", Icon = "wrench", Collapsible = true})
+        local gearList = {"All", "Bolt", "Tyre", "Sheet Metal", "Old Radio", "Broken Fan", "Broken Microwave", "Washing Machine", "Old Car Engine", "UFO Scrap", "UFO Component", "UFO Junk", "Cultist Gem", "Gem of the Forest"}
+        local selGear = {"All"}
+        gearSec:Dropdown({Title="Pilih Gear", Values=gearList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGear=o or {"All"} end})
+        gearSec:Button({Title="Bring Gears", Callback=function() bringItems(gearList, selGear, selectedLocation) end})
+
+        local gunSec = BringTab:Section({Title = "Guns & Ammo", Icon = "swords", Collapsible = true})
+        local gunList = {"All", "Infernal Sword", "Morningstar", "Crossbow", "Infernal Crossbow", "Laser Sword", "Raygun", "Ice Axe", "Ice Sword", "Chainsaw", "Strong Axe", "Axe Trim Kit", "Spear", "Good Axe", "Revolver", "Rifle", "Tactical Shotgun", "Revolver Ammo", "Rifle Ammo", "Alien Armour", "Frog Boots", "Leather Body", "Iron Body", "Thorn Body", "Riot Shield", "Armour Trim Kit", "Obsidiron Boots"}
+        local selGun = {"All"}
+        gunSec:Dropdown({Title="Pilih Weapon", Values=gunList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGun=o or {"All"} end})
+        gunSec:Button({Title="Bring Guns & Ammo", Callback=function() bringItems(gunList, selGun, selectedLocation) end})
+
+        local otherSec = BringTab:Section({Title = "Bring Other", Icon = "package", Collapsible = true})
+        local otherList = {"All", "Purple Fur Tuft", "Halloween Candle", "Candy", "Frog Key", "Feather", "Wildfire", "Sacrifice Totem", "Old Rod", "Flower", "Coin Stack", "Infernal Sack", "Giant Sack", "Good Sack", "Seed Box", "Chainsaw", "Old Flashlight", "Strong Flashlight", "Bunny Foot", "Wolf Pelt", "Bear Pelt", "Mammoth Tusk", "Alpha Wolf Pelt", "Bear Corpse", "Meteor Shard", "Gold Shard", "Raw Obsidiron Ore", "Gem of the Forest", "Diamond", "Defense Blueprint"}
+        local selOther = {"All"}
+        otherSec:Dropdown({Title="Pilih Item", Values=otherList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selOther=o or {"All"} end})
+        otherSec:Button({Title="Bring Other", Callback=function() bringItems(otherList, selOther, selectedLocation) end})
+        
+        -- ==============================================
         -- MAIN TAB
         mainTab:Paragraph({ Title = "Papi Dimz HUB", Desc = "Godmode, AntiAFK, Auto Sacrifice Lava, Auto Farm, Aura, Webhook DayDisplay.\nHotkey PC: P untuk toggle UI.", Color = "Grey" })
         mainTab:Toggle({ Title = "GodMode (Damage -∞)", Icon = "shield", Default = false, Callback = function(state) GodmodeEnabled = state end })
@@ -1599,12 +1820,7 @@ local function createMainUI()
             notifyUI("Fishing Clean", "Fishing features dibersihkan.", 3)
         end })
 
-
-        --bring & teleport test
-        bringTab:Paragraph({ Title = "Bring Item", Desc = "Membawa item ke posisi player.", Color = "Grey" })
-        teleportTab:Paragraph({ Title = "Teleport", Desc = "Teleport ke lokasi tertentu.", Color = "Grey" })
-
-        -- FARM TAB (original)
+                -- FARM TAB (original)
         farmTab:Toggle({ Title = "Auto Crockpot (Carrot + Corn)", Icon = "flame", Default = false, Callback = function(state)
             if scriptDisabled then return end
             if state then
@@ -1669,6 +1885,7 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
+        Window:OnDestroy(resetAll)
     end
 end
 
