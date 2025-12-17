@@ -368,7 +368,7 @@ local function startMiniHudLoop()
 end
 
 ---------------------------------------------------------
--- TELEPORT CORE FUNCTION (SAFE)
+-- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
 ---------------------------------------------------------
 local function teleportToCFrame(cf)
     if scriptDisabled then return end
@@ -389,22 +389,13 @@ local function teleportToCFrame(cf)
         return
     end
 
-    -- Anti stuck: naik sedikit
+    -- Anti stuck
     local safeCF = cf * CFrame.new(0, 3, 0)
 
-    -- Hentikan velocity biar ga mental
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
-    -- Teleport instan
     hrp.CFrame = safeCF
-
-    notifyUI(
-        "Teleport",
-        "Teleport berhasil.",
-        3,
-        "navigation"
-    )
 end
 
 
