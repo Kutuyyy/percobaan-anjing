@@ -368,6 +368,47 @@ local function startMiniHudLoop()
 end
 
 ---------------------------------------------------------
+-- TELEPORT CORE FUNCTION (SAFE)
+---------------------------------------------------------
+local function teleportToCFrame(cf)
+    if scriptDisabled then return end
+    if not cf or typeof(cf) ~= "CFrame" then
+        warn("[Teleport] CFrame tidak valid.")
+        return
+    end
+
+    local char = LocalPlayer.Character
+    if not char then
+        warn("[Teleport] Character belum siap.")
+        return
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        warn("[Teleport] HumanoidRootPart tidak ditemukan.")
+        return
+    end
+
+    -- Anti stuck: naik sedikit
+    local safeCF = cf * CFrame.new(0, 3, 0)
+
+    -- Hentikan velocity biar ga mental
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    -- Teleport instan
+    hrp.CFrame = safeCF
+
+    notifyUI(
+        "Teleport",
+        "Teleport berhasil.",
+        3,
+        "navigation"
+    )
+end
+
+
+---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
 ---------------------------------------------------------
 local function getCharacter()
