@@ -12,10 +12,19 @@ local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
 local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualInputManager
+pcall(function()
+    VirtualInputManager = game:GetService("VirtualInputManager")
+end)
+
 local LocalPlayer = Players.LocalPlayer
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local Camera = Workspace.CurrentCamera
+local Character = nil
+local Camera = nil
+task.spawn(function()
+    repeat task.wait() until Workspace.CurrentCamera
+    Camera = Workspace.CurrentCamera
+end)
+
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
@@ -184,15 +193,9 @@ local function trim(s)
     return s:match("^%s*(.-)%s*$")
 end
 local function getGuiParent()
-    local parent
-    pcall(function()
-        if gethui then parent = gethui() end
-    end)
-    if not parent then
-        parent = LocalPlayer:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
-    end
-    return parent
+    return LocalPlayer:WaitForChild("PlayerGui")
 end
+
 local function getInstancePath(inst)
     if not inst then return "nil" end
     local parts = { inst.Name }
@@ -1536,7 +1539,16 @@ local function createMainUI()
             SideBarWidth = 180,
             HasOutline = true,
         })
-        
+        Window:EditOpenButton({
+            Title = "Papi Dimz |HUB",
+            Icon = "sparkles",
+            CornerRadius = UDim.new(0, 16),
+            StrokeThickness = 2,
+            Color = ColorSequence.new(Color3.fromRGB(255, 15, 123), Color3.fromRGB(248, 155, 41)),
+            OnlyMobile = true,
+            Enabled = true,
+            Draggable = true,
+        })
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
