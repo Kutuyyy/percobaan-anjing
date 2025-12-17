@@ -1562,7 +1562,7 @@ local function createMainUI()
                 if hrp then
                     teleportToCFrame(hrp.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content=selectedChild.." tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content=selectedChild.." tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1586,7 +1586,7 @@ local function createMainUI()
                 if firePath then
                     teleportToCFrame(firePath.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Camp (Fire) tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Camp (Fire) tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1602,7 +1602,7 @@ local function createMainUI()
                 if cultistBase and cultistBase.PrimaryPart then
                     teleportToCFrame(cultistBase.PrimaryPart.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Cultist Generator Base tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Cultist Generator Base tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1629,7 +1629,7 @@ local function createMainUI()
                 if sign then
                     teleportToCFrame(sign.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Stronghold tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Stronghold tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1645,7 +1645,7 @@ local function createMainUI()
                 if diamondChest then
                     teleportToCFrame(diamondChest.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Stronghold Diamond Chest tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Stronghold Diamond Chest tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1660,7 +1660,7 @@ local function createMainUI()
                 if caravan and caravan.PrimaryPart then
                     teleportToCFrame(caravan.PrimaryPart.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Caravan tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Caravan tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1677,7 +1677,7 @@ local function createMainUI()
                 if fairyHRP then
                     teleportToCFrame(fairyHRP.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Fairy tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Fairy tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1695,7 +1695,7 @@ local function createMainUI()
                 if anvil then
                     teleportToCFrame(anvil.CFrame)
                 else
-                    WindUI:Notify({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
+                    notifyUI({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1977,11 +1977,11 @@ backgroundFind(ReplicatedStorage, "RemoteEvents", function(re)
     notifyUI("Init", "RemoteEvents ditemukan.", 3, "radio")
     RequestStartDragging = re:FindFirstChild("RequestStartDraggingItem")
     RequestStopDragging = re:FindFirstChild("StopDraggingItem")
-    CollectCoinRemote = re:FindFirstChild("RequestCollectCoints")
+    CollectCoinRemote = re:FindFirstChild("RequestCollectCoins")
     ConsumeItemRemote = re:FindFirstChild("RequestConsumeItem")
     NightSkipRemote = re:FindFirstChild("RequestActivateNightSkipMachine")
     ToolDamageRemote = re:FindFirstChild("ToolDamageObject")
-    EquipHandleRemote = re:FindFirstChild(" EquipItemHandle")
+    EquipHandleRemote = re:FindFirstChild("EquipItemHandle")
     tryHookDayDisplay()
 end)
 backgroundFind(Workspace, "Items", function(it)
