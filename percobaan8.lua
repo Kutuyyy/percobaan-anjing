@@ -213,16 +213,6 @@ local function notifyUI(title, content, duration, icon)
     end
 end
 
-local function teleportToCFrame(cf)
-    if not cf then
-        notifyUI("Error", "Lokasi tidak ditemukan!", 4, "alert-triangle")
-        return
-    end
-    rootPart.CFrame = cf + Vector3.new(0, 4, 0)
-    notifyUI("Teleport!", "Berhasil teleport!", 4, "navigation")
-end
-
-
 ---------------------------------------------------------
 -- MINI HUD & SPLASH
 ---------------------------------------------------------
@@ -1562,7 +1552,7 @@ local function createMainUI()
                 if hrp then
                     teleportToCFrame(hrp.CFrame)
                 else
-                    notifyUI({Title="Error", Content=selectedChild.." tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content=selectedChild.." tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1586,7 +1576,7 @@ local function createMainUI()
                 if firePath then
                     teleportToCFrame(firePath.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Camp (Fire) tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Camp (Fire) tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1602,7 +1592,7 @@ local function createMainUI()
                 if cultistBase and cultistBase.PrimaryPart then
                     teleportToCFrame(cultistBase.PrimaryPart.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Cultist Generator Base tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Cultist Generator Base tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1629,7 +1619,7 @@ local function createMainUI()
                 if sign then
                     teleportToCFrame(sign.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Stronghold tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Stronghold tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1645,7 +1635,7 @@ local function createMainUI()
                 if diamondChest then
                     teleportToCFrame(diamondChest.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Stronghold Diamond Chest tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Stronghold Diamond Chest tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1660,7 +1650,7 @@ local function createMainUI()
                 if caravan and caravan.PrimaryPart then
                     teleportToCFrame(caravan.PrimaryPart.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Caravan tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Caravan tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1677,7 +1667,7 @@ local function createMainUI()
                 if fairyHRP then
                     teleportToCFrame(fairyHRP.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Fairy tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Fairy tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
@@ -1695,7 +1685,7 @@ local function createMainUI()
                 if anvil then
                     teleportToCFrame(anvil.CFrame)
                 else
-                    notifyUI({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
+                    WindUI:Notify({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
                 end
             end
         })
