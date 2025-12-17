@@ -367,6 +367,18 @@ local function startMiniHudLoop()
     end)
 end
 ---------------------------------------------------------
+-- TELEPORT CORE
+---------------------------------------------------------
+local function teleportToCFrame(cf)
+    if not cf then
+        WindUI:Notify({Title="Error", Content="Lokasi tidak ditemukan!", Icon="alert-triangle"})
+        return
+    end
+    rootPart.CFrame = cf + Vector3.new(0,4,0)
+    WindUI:Notify({Title="Teleport!", Content="Berhasil teleport!", Icon="navigation", Duration=4})
+end
+
+---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
 ---------------------------------------------------------
 local function getCharacter()
@@ -1518,6 +1530,7 @@ local function createMainUI()
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
         BringTab = Window:Tab({Title = "Bring Item", Icon = "hand"})
         TeleportTab = Window:Tab({Title = "Teleport", Icon = "navigation"})
+        UpdateTab = Window:Tab({Title="Update Focused", Icon="snowflake"})
         farmTab = Window:Tab({ Title = "Farm", Icon = "chef-hat" })
         utilTab = Window:Tab({ Title = "Tools", Icon = "wrench" })
         nightTab = Window:Tab({ Title = "Night", Icon = "moon" })
@@ -1685,6 +1698,76 @@ local function createMainUI()
                 else
                     WindUI:Notify({Title="Error", Content="Anvil tidak ditemukan!", Icon="alert-triangle"})
                 end
+            end
+        })
+
+        -- CHRISTMAS SECTION
+        local christmasSec = UpdateTab:Section({Title="Christmas",Icon="gift",DefaultOpen=true})
+
+        christmasSec:Button({
+            Title="Teleport to Christmas Present",
+            Callback=function()
+                local p = Workspace.Items:FindFirstChild("ChristmasPresent1")
+                local part = p and (p.PrimaryPart or p:FindFirstChildWhichIsA("BasePart",true))
+                teleportToCFrame(part and part.CFrame)
+            end
+        })
+
+        christmasSec:Button({
+            Title="Teleport to Santa's Sack",
+            Callback=function()
+                local sled = Workspace.Map.Landmarks["Santa's Sack"].SantaSack.Sled
+                teleportToCFrame(
+                    (sled.Rail and sled.Rail.Part and sled.Rail.Part.CFrame)
+                    or (sled.Engine and sled.Engine.CFrame)
+                )
+            end
+        })
+
+        local optList={"North Pole","Elf Tree","Elf Ice Lake","Elf Ice Race"}
+        local selectedOpt="North Pole"
+
+        christmasSec:Dropdown({
+            Title="Teleport Options",
+            Values=optList,
+            Value="North Pole",
+            Callback=function(v) selectedOpt=v end
+        })
+
+        christmasSec:Button({
+            Title="Teleport",
+            Callback=function()
+                local t=nil
+                if selectedOpt=="North Pole" then
+                    local np = Workspace.Map.Landmarks:FindFirstChild("North Pole")
+                        and Workspace.Map.Landmarks["North Pole"]:FindFirstChild("Festive Carpet Blueprint")
+
+                    t =
+                        np and np:FindFirstChild("GraphLines")
+                        or np and np:FindFirstChild("Star")
+                elseif selectedOpt=="Elf Tree" then
+                    t=Workspace.Map.Landmarks["Elf Tree"].Trees["Northern Pine"].TrunkPart
+                elseif selectedOpt=="Elf Ice Lake" then
+                    local l=Workspace.Map.Landmarks["Elf Ice Lake"]
+                    t=l:FindFirstChild("Main") or l.GrassFolder:FindFirstChild("Grass")
+                elseif selectedOpt=="Elf Ice Race" then
+                    t=Workspace.Map.Landmarks["Elf Ice Race"].Obstacles.SnowStoneTall.Part
+                end
+                teleportToCFrame(t and t.CFrame)
+            end
+        })
+
+        -- MAZE SECTION
+        local mazeSec = UpdateTab:Section({Title="Maze",Icon="map"})
+        mazeSec:Button({
+            Title="TP to End",
+            Callback=function()
+                local chest = Workspace.Items:FindFirstChild("Halloween Maze Chest")
+                local target =
+                    chest and chest:FindFirstChild("Main")
+                    or chest and chest:FindFirstChild("ItemDrop")
+
+                teleportToCFrame(target and target.CFrame)
             end
         })
 
