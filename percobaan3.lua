@@ -372,11 +372,11 @@ end
 ---------------------------------------------------------
 local function teleportToCFrame(cf)
     if not cf then
-        WindUI:Notify({Title="Error", Content="Lokasi tidak ditemukan!", Icon="alert-triangle"})
+        notifyUI("Error", "Lokasi tidak ditemukan!", 4, "alert-triangle")
         return
     end
-    HumanoidRootPart.CFrame = cf + Vector3.new(0,4,0)
-    WindUI:Notify({Title="Teleport!", Content="Berhasil teleport!", Icon="navigation", Duration=4})
+    rootPart.CFrame = cf + Vector3.new(0,4,0)
+    notifyUI("Teleport!", "Berhasil teleport!", 4, "navigation")
 end
 
 ---------------------------------------------------------
