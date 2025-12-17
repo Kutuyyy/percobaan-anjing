@@ -149,7 +149,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = Camera.FieldOfView
+local defaultFOV = 70 -- fallback aman
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -252,6 +252,16 @@ local function waitUntilReady(timeout)
     end
     return false
 end
+
+---------------------------------------------------------
+-- CAPTURE DEFAULT CAMERA FOV (SAFE)
+---------------------------------------------------------
+task.spawn(function()
+    waitUntilReady(8)
+    if Camera then
+        defaultFOV = Camera.FieldOfView
+    end
+end)
 
 ---------------------------------------------------------
 -- GENERIC HELPERS
@@ -1601,16 +1611,24 @@ local function createMainUI()
             SideBarWidth = 180,
             HasOutline = true,
         })
-        Window:EditOpenButton({
-            Title = "Papi Dimz |HUB",
-            Icon = "sparkles",
-            CornerRadius = UDim.new(0, 16),
-            StrokeThickness = 2,
-            Color = ColorSequence.new(Color3.fromRGB(255, 15, 123), Color3.fromRGB(248, 155, 41)),
-            OnlyMobile = true,
-            Enabled = true,
-            Draggable = true,
-        })
+        pcall(function()
+            if type(Window.EditOpenButton) == "function" then
+                Window.EditOpenButton({
+                    Title = "Papi Dimz |HUB",
+                    Icon = "sparkles",
+                    CornerRadius = UDim.new(0, 16),
+                    StrokeThickness = 2,
+                    Color = ColorSequence.new(
+                        Color3.fromRGB(255, 15, 123),
+                        Color3.fromRGB(248, 155, 41)
+                    ),
+                    OnlyMobile = true,
+                    Enabled = true,
+                    Draggable = true,
+                })
+            end
+        end)
+
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
@@ -2117,5 +2135,11 @@ task.spawn(function()
     print("[INIT] UI initialized")
 end)
 
-
-notifyUI("Papi Dimz |HUB", "Semua fitur loaded: Main, Local Player, Fishing, Farm, Tools, Night, Webhook, Health", 6, "sparkles")
+task.delay(1.5, function()
+    notifyUI(
+        "Papi Dimz |HUB",
+        "Semua fitur loaded: Main, Local Player, Fishing, Farm, Tools, Night, Webhook, Health",
+        6,
+        "sparkles"
+    )
+end)
