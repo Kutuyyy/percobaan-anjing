@@ -729,32 +729,31 @@ function bringItems(fullList, selectedList, location)
     -- Move items (mirip scrapper)
     task.spawn(function()
         for i, item in ipairs(candidates) do
-            if scriptDisabled then return end
-            if not item or not item.Parent or not item.PrimaryPart then continue end
+            if item and item.Parent and item.PrimaryPart then
+                local dropCF = getBringDropCFrame(baseCF, i)
 
-            local dropCF = getBringDropCFrame(baseCF, i)
+                pcall(function()
+                    if RequestStartDragging then
+                        RequestStartDragging:FireServer(item)
+                    end
+                end)
 
-            pcall(function()
-                if RequestStartDragging then
-                    RequestStartDragging:FireServer(item)
-                end
-            end)
+                task.wait(0.03)
 
-            task.wait(0.03)
+                pcall(function()
+                    item:PivotTo(dropCF)
+                end)
 
-            pcall(function()
-                item:PivotTo(dropCF)
-            end)
+                task.wait(0.03)
 
-            task.wait(0.03)
+                pcall(function()
+                    if RequestStopDragging then
+                        RequestStopDragging:FireServer(item)
+                    end
+                end)
 
-            pcall(function()
-                if RequestStopDragging then
-                    RequestStopDragging:FireServer(item)
-                end
-            end)
-
-            task.wait(0.03)
+                task.wait(0.03)
+            end
         end
     end)
 end
