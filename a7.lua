@@ -125,7 +125,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = Camera.FieldOfView
+--local defaultFOV = Camera.FieldOfView
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -530,8 +530,14 @@ local function zeroVelocities(part)
     end
 end
 local function applyFOV()
-    if fovEnabled then Camera.FieldOfView = fovValue else Camera.FieldOfView = defaultFOV end
+    if not Camera then return end
+    if fovEnabled then
+        Camera.FieldOfView = fovValue
+    else
+        Camera.FieldOfView = defaultFOV
+    end
 end
+
 local function applyWalkspeed()
     if humanoid and walkEnabled then humanoid.WalkSpeed = math.clamp(walkSpeedValue, 16, 200) else if humanoid then humanoid.WalkSpeed = defaultWalkSpeed end end
 end
@@ -2209,6 +2215,9 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
     humanoid = char:WaitForChild("Humanoid")
     rootPart = char:WaitForChild("HumanoidRootPart")
+    if Camera then
+        defaultFOV = Camera.FieldOfView
+    end
     defaultWalkSpeed = humanoid.WalkSpeed
     defaultHipHeight = humanoid.HipHeight
     applyWalkspeed()
@@ -2222,6 +2231,70 @@ if LocalPlayer.Character then
     if humanoid then defaultWalkSpeed = humanoid.WalkSpeed; defaultHipHeight = humanoid.HipHeight end
 end
 
+---------------------------------------------------------
+-- INITIAL CHARACTER & CAMERA STATE (SAFE INIT)
+---------------------------------------------------------
+
+-- default nilai fallback (biar tidak nil)
+local defaultWalkSpeed = 16
+local defaultHipHeight = 0
+local defaultFOV = 70
+
+-- helper tunggu camera (non-blocking friendly)
+local function waitForCamera(timeout)
+    timeout = timeout or 5
+    local start = os.clock()
+    while not Workspace.CurrentCamera do
+        if os.clock() - start > timeout then
+            return nil
+        end
+        task.wait()
+    end
+    return Workspace.CurrentCamera
+end
+
+-- ambil camera dengan aman
+Camera = waitForCamera() or Workspace.CurrentCamera
+
+-- init karakter jika sudah ada
+if LocalPlayer.Character then
+    local char = LocalPlayer.Character
+
+    humanoid = char:FindFirstChildOfClass("Humanoid")
+    rootPart = char:FindFirstChild("HumanoidRootPart")
+
+    if humanoid then
+        defaultWalkSpeed = humanoid.WalkSpeed
+        defaultHipHeight = humanoid.HipHeight
+    end
+
+    if Camera then
+        defaultFOV = Camera.FieldOfView
+    end
+end
+
+-- update ulang saat respawn
+LocalPlayer.CharacterAdded:Connect(function(char)
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+
+    task.wait(0.2) -- beri waktu client sync
+
+    if humanoid then
+        defaultWalkSpeed = humanoid.WalkSpeed
+        defaultHipHeight = humanoid.HipHeight
+    end
+
+    if not Camera then
+        Camera = waitForCamera()
+    end
+
+    if Camera then
+        defaultFOV = Camera.FieldOfView
+    end
+end)
+
+---------------------------------------------------------
 print("[PapiDimz] HUB Loaded - All-in-One")
 splashScreen()
 createMainUI()
