@@ -28,16 +28,6 @@ end)
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
-local function listHas(list, value)
-    if type(list) ~= "table" then return false end
-    for _, v in ipairs(list) do
-        if v == value then
-            return true
-        end
-    end
-    return false
-end
-
 local function findWithTimeout(parent, name, timeout, pollInterval)
     timeout = timeout or 6
     pollInterval = pollInterval or 0.25
@@ -88,8 +78,10 @@ end
 -- STATE & CONFIG
 ---------------------------------------------------------
 local scriptDisabled = false
-local selectedLocation = "Player"
+
 local BringHeight = 20
+local selectedLocation = "Player"
+
 -- Remotes / folders
 local RemoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
 local RequestStartDragging, RequestStopDragging, CollectCoinRemote, ConsumeItemRemote, NightSkipRemote, ToolDamageRemote, EquipHandleRemote
@@ -135,7 +127,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = 70
+local defaultFOV = Camera.FieldOfView
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -187,119 +179,139 @@ local fishingLoopThread = nil
 -- UI & HUD
 local Window
 local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
-local BringTab, TeleportTab, UpdateTab
-local miniHudGui, miniHudFrame
-local miniUptimeLabel, miniLavaLabel, miniPingFpsLabel, miniFeaturesLabel
+local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
 
 local scriptStartTime = os.clock()
 local currentFPS = 0
 local auraHeartbeatConnection = nil
+
 ---------------------------------------------------------
--- GENERIC HELPERS (SHARED: BRING / COOK / SCRAP)
+-- BRING ITEMS : WORKBENCH RESOLVER
 ---------------------------------------------------------
+local function getBringWorkbenchPos()
+    if ScrapperTarget and ScrapperTarget.Parent then
+        return ScrapperTarget.Position + Vector3.new(0, BringHeight, 0)
+    end
+    return nil
+end
 
--- Resolve base CFrame dari lokasi Bring
-local function resolveBringTargetCFrame(location)
-    if location == "Player" then
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return nil, "HumanoidRootPart tidak ditemukan" end
-        return hrp.CFrame * CFrame.new(0, BringHeight or 20, 0)
 
-    elseif location == "Workbench" then
-        local target =
-            Workspace:FindFirstChild("Map")
-            and Workspace.Map:FindFirstChild("Campground")
-            and Workspace.Map.Campground:FindFirstChild("Scrapper")
-            and Workspace.Map.Campground.Scrapper:FindFirstChild("Movers")
-            and Workspace.Map.Campground.Scrapper.Movers:FindFirstChild("Right")
-            and Workspace.Map.Campground.Scrapper.Movers.Right:FindFirstChild("GrindersRight")
+---------------------------------------------------------
+-- BRING ITEMS : TARGET POSITION
+---------------------------------------------------------
+local function getBringTargetPosition()
+    local hrp = getRoot()
+    if not hrp then return nil end
 
-        if target and target:IsA("BasePart") then
-            return target.CFrame
-        end
-        return nil, "Workbench (GrindersRight) tidak ditemukan"
+    if selectedLocation == "Player" then
+        return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
 
-    elseif location == "Fire" then
+    elseif selectedLocation == "Workbench" then
+        return getBringWorkbenchPos()
+
+    elseif selectedLocation == "Fire" then
         local fire =
             Workspace:FindFirstChild("Map")
             and Workspace.Map:FindFirstChild("Campground")
             and Workspace.Map.Campground:FindFirstChild("MainFire")
             and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
 
-        if fire and fire:IsA("BasePart") then
-            return fire.CFrame
+        if fire then
+            return fire.Position + Vector3.new(0, BringHeight, 0)
         end
-        return nil, "Fire (OuterTouchZone) tidak ditemukan"
     end
 
-    return nil, "Location tidak valid"
+    return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
 end
 
-
--- Drop melingkar (dipakai SEMUA: Bring / Cook / Scrap)
-local function getCircularDropCFrame(baseCF, index, radius, height)
-    if typeof(baseCF) ~= "CFrame" then return nil end
-
-    radius = radius or 2
-    height = height or 3
-
-    local angle = (index - 1) * (math.pi / 6)
-    local offset = Vector3.new(
+---------------------------------------------------------
+-- BRING ITEMS : DROP CIRCLE
+---------------------------------------------------------
+local function getBringDropCFrame(basePos, index)
+    local angle = (index - 1) * (math.pi * 2 / 12)
+    local radius = 3
+    return CFrame.new(basePos + Vector3.new(
         math.cos(angle) * radius,
-        height,
+        0,
         math.sin(angle) * radius
-    )
-
-    return baseCF * CFrame.new(offset)
+    ))
 end
 
+---------------------------------------------------------
+-- BRING ITEMS : CORE
+---------------------------------------------------------
+local function bringItems(itemList, selectedItems)
+    if scriptDisabled then return end
 
--- Drag + Pivot helper (1 pintu)
-local function moveItemToCFrame(item, targetCF)
-    if not item or not item.Parent then return false end
-    if not item:IsA("Model") then return false end
-    if not item.PrimaryPart then return false end
-    if typeof(targetCF) ~= "CFrame" then return false end
+    if not ItemsFolder then
+        notifyUI("Bring Item", "Items belum siap.", 3, "alert-triangle")
+        return
+    end
+    if not RequestStartDragging or not RequestStopDragging then
+        notifyUI("Bring Item", "Remote dragging belum siap.", 3, "alert-triangle")
+        return
+    end
 
-    pcall(function()
-        if RequestStartDragging then
+    local targetPos = getBringTargetPosition()
+    if not targetPos then
+        notifyUI("Bring Item", "Target position invalid.", 3, "alert-triangle")
+        return
+    end
+
+    local wanted = {}
+    if table.find(selectedItems, "All") then
+        for _, name in ipairs(itemList) do
+            if name ~= "All" then wanted[name] = true end
+        end
+    else
+        for _, name in ipairs(selectedItems) do wanted[name] = true end
+    end
+
+    local candidates = {}
+    for _, item in ipairs(ItemsFolder:GetChildren()) do
+        if item:IsA("Model")
+            and item.PrimaryPart
+            and wanted[item.Name] then
+            table.insert(candidates, item)
+        end
+    end
+
+    if #candidates == 0 then
+        notifyUI("Bring Item", "Item tidak ditemukan.", 3, "search")
+        return
+    end
+
+    notifyUI("Bring Item", (#candidates .. " item dibawa."), 4, "package")
+
+    for i, item in ipairs(candidates) do
+        if scriptDisabled then break end
+        if not item or not item.Parent then continue end
+
+        pcall(function()
             RequestStartDragging:FireServer(item)
-        end
-    end)
-
-    task.wait(0.03)
-
-    pcall(function()
-        item:PivotTo(targetCF)
-    end)
-
-    task.wait(0.03)
-
-    pcall(function()
-        if RequestStopDragging then
+            task.wait(0.03)
+            item:PivotTo(getBringDropCFrame(targetPos, i))
+            task.wait(0.03)
             RequestStopDragging:FireServer(item)
-        end
-    end)
+        end)
 
-    return true
+        task.wait(0.02)
+    end
 end
 
 
--- Utility helpers lain (tetap)
+---------------------------------------------------------
+-- GENERIC HELPERS
+---------------------------------------------------------
 local function tableToSet(list)
     local t = {}
-    for _, v in ipairs(list) do
-        t[v] = true
-    end
+    for _, v in ipairs(list) do t[v] = true end
     return t
 end
-
 local function trim(s)
     if type(s) ~= "string" then return s end
     return s:match("^%s*(.-)%s*$")
 end
-
 local function getGuiParent()
     return LocalPlayer:WaitForChild("PlayerGui")
 end
@@ -314,22 +326,15 @@ local function getInstancePath(inst)
     end
     return table.concat(parts, ".")
 end
-
 local function notifyUI(title, content, duration, icon)
     if WindUI then
         pcall(function()
-            WindUI:Notify({
-                Title = title or "Info",
-                Content = content or "",
-                Duration = duration or 4,
-                Icon = icon or "info"
-            })
+            WindUI:Notify({ Title = title or "Info", Content = content or "", Duration = duration or 4, Icon = icon or "info" })
         end)
     else
         createFallbackNotify(string.format("%s - %s", tostring(title), tostring(content)))
     end
 end
-
 
 ---------------------------------------------------------
 -- MINI HUD & SPLASH
@@ -540,14 +545,8 @@ local function zeroVelocities(part)
     end
 end
 local function applyFOV()
-    if not Camera then return end
-    if fovEnabled then
-        Camera.FieldOfView = fovValue
-    else
-        Camera.FieldOfView = defaultFOV
-    end
+    if fovEnabled then Camera.FieldOfView = fovValue else Camera.FieldOfView = defaultFOV end
 end
-
 local function applyWalkspeed()
     if humanoid and walkEnabled then humanoid.WalkSpeed = math.clamp(walkSpeedValue, 16, 200) else if humanoid then humanoid.WalkSpeed = defaultWalkSpeed end end
 end
@@ -596,10 +595,6 @@ local function playIdleAnimation()
 end
 local function startFly()
     if flyEnabled or scriptDisabled then return end
-    if not Camera then
-        notifyUI("Fly", "Camera belum siap.", 3, "alert-triangle")
-        return
-    end
     local char = getCharacter()
     rootPart = getRoot()
     if not char or not rootPart then return end
@@ -743,76 +738,6 @@ local function disableInstantOpen()
     promptOriginalHold = {}
     notifyUI("Instant Open", "Durasi dikembalikan.", 3, "refresh-ccw")
 end
-
-----------------------------------------------------------
--- BRING ITEMS FUNCTION
-----------------------------------------------------------
-local function bringItems(fullList, selectedList, location)
-    if scriptDisabled then return end
-    if not ItemsFolder then
-        notifyUI("Bring Items", "Items folder belum siap.", 4, "alert-triangle")
-        return
-    end
-
-    -- Resolve target
-    local baseCF, err = resolveBringTargetCFrame(location)
-    if not baseCF then
-        notifyUI("Bring Items", err, 4, "alert-triangle")
-        return
-    end
-
-    -- Build target set
-    local targetSet = {}
-    if listHas(selectedList, "All") then
-        for _, name in ipairs(fullList) do
-            if name ~= "All" then
-                targetSet[name] = true
-            end
-        end
-    else
-        for _, name in ipairs(selectedList) do
-            targetSet[name] = true
-        end
-    end
-
-    -- Collect candidates
-    local candidates = {}
-    for _, item in ipairs(ItemsFolder:GetChildren()) do
-        if item:IsA("Model")
-            and item.PrimaryPart
-            and targetSet[item.Name]
-        then
-            table.insert(candidates, item)
-        end
-    end
-
-    if #candidates == 0 then
-        notifyUI("Bring Items", "Tidak ada item yang cocok.", 3)
-        return
-    end
-
-    notifyUI(
-        "Bring Items",
-        string.format("Memindahkan %d item ke %s...", #candidates, location),
-        4,
-        "package"
-    )
-
-    -- Move items (mirip scrapper)
-    task.spawn(function()
-        for i, item in ipairs(candidates) do
-            if item and item.Parent and item.PrimaryPart then
-                local dropCF = getCircularDropCFrame(baseCF, i, 2, BringHeight)
-                if dropCF then
-                    moveItemToCFrame(item, dropCF)
-                end
-
-                task.wait(0.03)
-            end
-        end
-    end)
-end
-
 ---------------------------------------------------------
 -- FISHING FUNCTIONS (XENO GLASS)
 ---------------------------------------------------------
@@ -852,7 +777,6 @@ local function fishingHideOverlay()
 end
 local function fishingDoClick()
     if not fishingSavedPosition then return end
-    if not VirtualInputManager then return end -- 🔧 WAJIB
     local x = math.floor(fishingSavedPosition.x + fishingOffsetX)
     local y = math.floor(fishingSavedPosition.y + fishingOffsetY)
     pcall(function()
@@ -1136,10 +1060,12 @@ local function cookOnce()
                         local entry = candidates[i]
                         local item = entry.instance
                         if item and item.Parent then
-                            local dropCF = getCircularDropCFrame(base.CFrame, i, 2, 3)
-                            if dropCF then
-                                moveItemToCFrame(item, dropCF)
-                            end
+                            local dropCF = getCookDropCFrame(base, i)
+                            pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
+                            task.wait(0.03)
+                            pcall(function() item:PivotTo(dropCF) end)
+                            task.wait(0.03)
+                            pcall(function() if RequestStopDragging then RequestStopDragging:FireServer(item) end end)
                             print(string.format("[Cook] %s → %s (dist=%.1f)", item.Name, station.Name, entry.distance))
                             task.wait(0.03)
                         end
@@ -1216,10 +1142,12 @@ local function scrapOnceFullPass()
                 if not ScrapEnabled or scriptDisabled then return end
                 local item = entry.instance
                 if item and item.Parent then
-                    local dropCF = getCircularDropCFrame(scrapBase.CFrame, i, 1.5, 6)
-                    if dropCF then
-                        moveItemToCFrame(item, dropCF)
-                    end
+                    local dropCF = getScrapDropCFrame(scrapBase, i)
+                    pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
+                    task.wait(0.02)
+                    pcall(function() item:PivotTo(dropCF) end)
+                    task.wait(0.02)
+                    pcall(function() if RequestStopDragging then RequestStopDragging:FireServer(item) end end)
                     print(string.format("[Scrap] %s → Grinder (dist=%.1f)", item.Name, entry.distance or -1))
                     task.wait(0.02)
                 end
@@ -1988,61 +1916,263 @@ local function createMainUI()
         })
 
         -- ==============================================
-        -- Bring Item Tab (tetap sama)
+        -- Bring Item Tab (BENAR)
         -- ==============================================
-        local settingSec = BringTab:Section({Title = "Bring Setting", Icon = "settings", Collapsible = true, DefaultOpen = true})
-        settingSec:Dropdown({Title = "Location", Desc = "Player / Workbench (Scrapper) / Fire", Values = {"Player", "Workbench", "Fire"}, Value = "Player", Callback = function(v) selectedLocation = v end})
-        settingSec:Input({Title = "Bring Height", Placeholder = "20", Default = "20", Numeric = true, Callback = function(v) BringHeight = tonumber(v) or 20 end})
+        local settingSec = BringTab:Section({
+            Title = "Bring Setting",
+            Icon = "settings",
+            Collapsible = true,
+            DefaultOpen = true
+        })
 
-        local cultistSec = BringTab:Section({Title = "Bring Cultist", Icon = "skull", Collapsible = true})
+        settingSec:Dropdown({
+            Title = "Location",
+            Desc = "Player / Workbench (Scrapper) / Fire",
+            Values = {"Player", "Workbench", "Fire"},
+            Value = "Player",
+            Callback = function(v)
+                selectedLocation = v
+            end
+        })
+
+        settingSec:Input({
+            Title = "Bring Height",
+            Placeholder = "20",
+            Default = "20",
+            Numeric = true,
+            Callback = function(v)
+                BringHeight = tonumber(v) or 20
+            end
+        })
+
+        -------------------------------------------------
+        -- CULTIST
+        -------------------------------------------------
+        local cultistSec = BringTab:Section({Title="Bring Cultist", Icon="skull", Collapsible=true})
         local cultistList = {"All", "Crossbow Cultist", "Cultist"}
         local selCultist = {"All"}
-        cultistSec:Dropdown({Title="Pilih Cultist", Values=cultistList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selCultist=o or {"All"} end})
-        cultistSec:Button({Title="Bring Cultist", Callback=function() bringItems(cultistList, selCultist, selectedLocation) end})
 
-        local meteorSec = BringTab:Section({Title = "Bring Meteor Items", Icon = "zap", Collapsible = true})
+        cultistSec:Dropdown({
+            Title="Pilih Cultist",
+            Values=cultistList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selCultist = o or {"All"}
+            end
+        })
+
+        cultistSec:Button({
+            Title="Bring Cultist",
+            Callback=function()
+                bringItems(cultistList, selCultist)
+            end
+        })
+
+        -------------------------------------------------
+        -- METEOR
+        -------------------------------------------------
+        local meteorSec = BringTab:Section({Title="Bring Meteor Items", Icon="zap", Collapsible=true})
         local meteorList = {"All", "Raw Obsidiron Ore", "Gold Shard", "Meteor Shard", "Scalding Obsidiron Ingot"}
         local selMeteor = {"All"}
-        meteorSec:Dropdown({Title="Pilih Item", Values=meteorList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selMeteor=o or {"All"} end})
-        meteorSec:Button({Title="Bring Meteor", Callback=function() bringItems(meteorList, selMeteor, selectedLocation) end})
 
-        local fuelSec = BringTab:Section({Title = "Fuels", Icon = "flame", Collapsible = true})
+        meteorSec:Dropdown({
+            Title="Pilih Item",
+            Values=meteorList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selMeteor = o or {"All"}
+            end
+        })
+
+        meteorSec:Button({
+            Title="Bring Meteor",
+            Callback=function()
+                bringItems(meteorList, selMeteor)
+            end
+        })
+
+        -------------------------------------------------
+        -- FUELS
+        -------------------------------------------------
+        local fuelSec = BringTab:Section({Title="Fuels", Icon="flame", Collapsible=true})
         local fuelList = {"All", "Log", "Coal", "Chair", "Fuel Canister", "Oil Barrel"}
         local selFuel = {"All"}
-        fuelSec:Dropdown({Title="Pilih Fuel", Values=fuelList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFuel=o or {"All"} end})
-        fuelSec:Button({Title="Bring Fuels", Callback=function() bringItems(fuelList, selFuel, selectedLocation) end})
-        fuelSec:Button({Title="Bring Logs Only", Callback=function() bringItems(fuelList, {"Log"}, selectedLocation) end})
 
-        local foodSec = BringTab:Section({Title = "Food", Icon = "drumstick", Collapsible = true})
-        local foodList = {"All", "Sweet Potato", "Stuffing", "Turkey Leg", "Carrot", "Pumkin", "Mackerel", "Salmon", "Swordfish", "Berry", "Ribs", "Stew", "Steak Dinner", "Morsel", "Steak", "Corn", "Cooked Morsel", "Cooked Steak", "Chilli", "Apple", "Cake"}
+        fuelSec:Dropdown({
+            Title="Pilih Fuel",
+            Values=fuelList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selFuel = o or {"All"}
+            end
+        })
+
+        fuelSec:Button({
+            Title="Bring Fuels",
+            Callback=function()
+                bringItems(fuelList, selFuel)
+            end
+        })
+
+        fuelSec:Button({
+            Title="Bring Logs Only",
+            Callback=function()
+                bringItems(fuelList, {"Log"})
+            end
+        })
+
+        -------------------------------------------------
+        -- FOOD
+        -------------------------------------------------
+        local foodSec = BringTab:Section({Title="Food", Icon="drumstick", Collapsible=true})
+        local foodList = {
+            "All","Sweet Potato","Stuffing","Turkey Leg","Carrot","Pumkin","Mackerel",
+            "Salmon","Swordfish","Berry","Ribs","Stew","Steak Dinner","Morsel","Steak",
+            "Corn","Cooked Morsel","Cooked Steak","Chilli","Apple","Cake"
+        }
         local selFood = {"All"}
-        foodSec:Dropdown({Title="Pilih Food", Values=foodList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFood=o or {"All"} end})
-        foodSec:Button({Title="Bring Food", Callback=function() bringItems(foodList, selFood, selectedLocation) end})
 
-        local healSec = BringTab:Section({Title = "Healing", Icon = "heart", Collapsible = true})
+        foodSec:Dropdown({
+            Title="Pilih Food",
+            Values=foodList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selFood = o or {"All"}
+            end
+        })
+
+        foodSec:Button({
+            Title="Bring Food",
+            Callback=function()
+                bringItems(foodList, selFood)
+            end
+        })
+
+        -------------------------------------------------
+        -- HEALING
+        -------------------------------------------------
+        local healSec = BringTab:Section({Title="Healing", Icon="heart", Collapsible=true})
         local healList = {"All", "Medkit", "Bandage"}
         local selHeal = {"All"}
-        healSec:Dropdown({Title="Pilih Healing", Values=healList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selHeal=o or {"All"} end})
-        healSec:Button({Title="Bring Healing", Callback=function() bringItems(healList, selHeal, selectedLocation) end})
 
-        local gearSec = BringTab:Section({Title = "Gears (Scrap)", Icon = "wrench", Collapsible = true})
-        local gearList = {"All", "Bolt", "Tyre", "Sheet Metal", "Old Radio", "Broken Fan", "Broken Microwave", "Washing Machine", "Old Car Engine", "UFO Scrap", "UFO Component", "UFO Junk", "Cultist Gem", "Gem of the Forest"}
+        healSec:Dropdown({
+            Title="Pilih Healing",
+            Values=healList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selHeal = o or {"All"}
+            end
+        })
+
+        healSec:Button({
+            Title="Bring Healing",
+            Callback=function()
+                bringItems(healList, selHeal)
+            end
+        })
+
+        -------------------------------------------------
+        -- GEARS
+        -------------------------------------------------
+        local gearSec = BringTab:Section({Title="Gears (Scrap)", Icon="wrench", Collapsible=true})
+        local gearList = {
+            "All","Bolt","Tyre","Sheet Metal","Old Radio","Broken Fan",
+            "Broken Microwave","Washing Machine","Old Car Engine",
+            "UFO Scrap","UFO Component","UFO Junk","Cultist Gem","Gem of the Forest"
+        }
         local selGear = {"All"}
-        gearSec:Dropdown({Title="Pilih Gear", Values=gearList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGear=o or {"All"} end})
-        gearSec:Button({Title="Bring Gears", Callback=function() bringItems(gearList, selGear, selectedLocation) end})
 
-        local gunSec = BringTab:Section({Title = "Guns & Ammo", Icon = "swords", Collapsible = true})
-        local gunList = {"All", "Infernal Sword", "Morningstar", "Crossbow", "Infernal Crossbow", "Laser Sword", "Raygun", "Ice Axe", "Ice Sword", "Chainsaw", "Strong Axe", "Axe Trim Kit", "Spear", "Good Axe", "Revolver", "Rifle", "Tactical Shotgun", "Revolver Ammo", "Rifle Ammo", "Alien Armour", "Frog Boots", "Leather Body", "Iron Body", "Thorn Body", "Riot Shield", "Armour Trim Kit", "Obsidiron Boots"}
+        gearSec:Dropdown({
+            Title="Pilih Gear",
+            Values=gearList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selGear = o or {"All"}
+            end
+        })
+
+        gearSec:Button({
+            Title="Bring Gears",
+            Callback=function()
+                bringItems(gearList, selGear)
+            end
+        })
+
+        -------------------------------------------------
+        -- GUNS & AMMO
+        -------------------------------------------------
+        local gunSec = BringTab:Section({Title="Guns & Ammo", Icon="swords", Collapsible=true})
+        local gunList = {
+            "All","Infernal Sword","Morningstar","Crossbow","Infernal Crossbow",
+            "Laser Sword","Raygun","Ice Axe","Ice Sword","Chainsaw","Strong Axe",
+            "Axe Trim Kit","Spear","Good Axe","Revolver","Rifle","Tactical Shotgun",
+            "Revolver Ammo","Rifle Ammo","Alien Armour","Frog Boots","Leather Body",
+            "Iron Body","Thorn Body","Riot Shield","Armour Trim Kit","Obsidiron Boots"
+        }
         local selGun = {"All"}
-        gunSec:Dropdown({Title="Pilih Weapon", Values=gunList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGun=o or {"All"} end})
-        gunSec:Button({Title="Bring Guns & Ammo", Callback=function() bringItems(gunList, selGun, selectedLocation) end})
 
-        local otherSec = BringTab:Section({Title = "Bring Other", Icon = "package", Collapsible = true})
-        local otherList = {"All", "Purple Fur Tuft", "Halloween Candle", "Candy", "Frog Key", "Feather", "Wildfire", "Sacrifice Totem", "Old Rod", "Flower", "Coin Stack", "Infernal Sack", "Giant Sack", "Good Sack", "Seed Box", "Chainsaw", "Old Flashlight", "Strong Flashlight", "Bunny Foot", "Wolf Pelt", "Bear Pelt", "Mammoth Tusk", "Alpha Wolf Pelt", "Bear Corpse", "Meteor Shard", "Gold Shard", "Raw Obsidiron Ore", "Gem of the Forest", "Diamond", "Defense Blueprint"}
+        gunSec:Dropdown({
+            Title="Pilih Weapon",
+            Values=gunList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selGun = o or {"All"}
+            end
+        })
+
+        gunSec:Button({
+            Title="Bring Guns & Ammo",
+            Callback=function()
+                bringItems(gunList, selGun)
+            end
+        })
+
+        -------------------------------------------------
+        -- OTHER
+        -------------------------------------------------
+        local otherSec = BringTab:Section({Title="Bring Other", Icon="package", Collapsible=true})
+        local otherList = {
+            "All","Purple Fur Tuft","Halloween Candle","Candy","Frog Key","Feather",
+            "Wildfire","Sacrifice Totem","Old Rod","Flower","Coin Stack","Infernal Sack",
+            "Giant Sack","Good Sack","Seed Box","Chainsaw","Old Flashlight",
+            "Strong Flashlight","Bunny Foot","Wolf Pelt","Bear Pelt","Mammoth Tusk",
+            "Alpha Wolf Pelt","Bear Corpse","Meteor Shard","Gold Shard",
+            "Raw Obsidiron Ore","Gem of the Forest","Diamond","Defense Blueprint"
+        }
         local selOther = {"All"}
-        otherSec:Dropdown({Title="Pilih Item", Values=otherList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selOther=o or {"All"} end})
-        otherSec:Button({Title="Bring Other", Callback=function() bringItems(otherList, selOther, selectedLocation) end})
-        
+
+        otherSec:Dropdown({
+            Title="Pilih Item",
+            Values=otherList,
+            Value={"All"},
+            Multi=true,
+            AllowNone=true,
+            Callback=function(o)
+                selOther = o or {"All"}
+            end
+        })
+
+        otherSec:Button({
+            Title="Bring Other",
+            Callback=function()
+                bringItems(otherList, selOther)
+            end
+        })
+
         -- ==============================================
         -- MAIN TAB
         mainTab:Paragraph({ Title = "Papi Dimz HUB", Desc = "Godmode, AntiAFK, Auto Sacrifice Lava, Auto Farm, Aura, Webhook DayDisplay.\nHotkey PC: P untuk toggle UI.", Color = "Grey" })
@@ -2184,6 +2314,7 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
+        Window:OnDestroy(resetAll)
     end
 end
 
@@ -2209,6 +2340,7 @@ backgroundFind(Workspace, "Structures", function(st)
     notifyUI("Init", "Structures ditemukan.", 3, "layers")
     TemporalAccelerometer = st:FindFirstChild("Temporal Accelerometer")
 end)
+task.spawn(function() tryHookDayDisplay() end)
 startGodmodeLoop()
 
 ---------------------------------------------------------
@@ -2218,9 +2350,6 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
     humanoid = char:WaitForChild("Humanoid")
     rootPart = char:WaitForChild("HumanoidRootPart")
-    if Camera then
-        defaultFOV = (Camera and Camera.FieldOfView) or defaultFOV
-    end
     defaultWalkSpeed = humanoid.WalkSpeed
     defaultHipHeight = humanoid.HipHeight
     applyWalkspeed()
@@ -2234,7 +2363,6 @@ if LocalPlayer.Character then
     if humanoid then defaultWalkSpeed = humanoid.WalkSpeed; defaultHipHeight = humanoid.HipHeight end
 end
 
----------------------------------------------------------
 print("[PapiDimz] HUB Loaded - All-in-One")
 splashScreen()
 createMainUI()
