@@ -78,6 +78,8 @@ end
 -- STATE & CONFIG
 ---------------------------------------------------------
 local scriptDisabled = false
+local selectedLocation = "Player"
+local BringHeight = 20
 -- Remotes / folders
 local RemoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
 local RequestStartDragging, RequestStopDragging, CollectCoinRemote, ConsumeItemRemote, NightSkipRemote, ToolDamageRemote, EquipHandleRemote
@@ -176,7 +178,8 @@ local fishingLoopThread = nil
 local Window
 local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
 local BringTab, TeleportTab, UpdateTab
-local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
+local miniHudGui, miniHudFrame
+local miniUptimeLabel, miniLavaLabel, miniPingFpsLabel, miniFeaturesLabel
 
 local scriptStartTime = os.clock()
 local currentFPS = 0
