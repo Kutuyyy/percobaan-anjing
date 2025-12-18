@@ -2,6 +2,24 @@
 -- Versi: Fully Integrated UI
 -- WARNING: Use at your own risk.
 ---------------------------------------------------------
+-- TASK LIBRARY FALLBACK (WAJIB PALING ATAS)
+---------------------------------------------------------
+if not task then
+    task = {}
+    function task.wait(t)
+        return wait(t)
+    end
+    function task.spawn(fn)
+        return coroutine.wrap(fn)()
+    end
+    function task.delay(t, fn)
+        coroutine.wrap(function()
+            wait(t)
+            fn()
+        end)()
+    end
+end
+---------------------------------------------------------
 -- SERVICES
 ---------------------------------------------------------
 local Players = game:GetService("Players")
@@ -23,28 +41,11 @@ local Camera = nil
 task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
+    defaultFOV = Camera.FieldOfView
 end)
 
-print("SCRIPT START - BEFORE BRING")
--- ================================
--- TASK LIBRARY FALLBACK (WAJIB)
--- ================================
-if not task then
-    task = {}
-    function task.wait(t)
-        return wait(t)
-    end
-    function task.spawn(fn)
-        return coroutine.wrap(fn)()
-    end
-    function task.delay(t, fn)
-        coroutine.wrap(function()
-            wait(t)
-            fn()
-        end)()
-    end
-end
 
+print("SCRIPT START - BEFORE BRING")
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
@@ -143,7 +144,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = Camera.FieldOfView
+local defaultFOV = 70 -- default aman
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -239,6 +240,18 @@ local function notifyUI(title, content, duration, icon)
     else
         createFallbackNotify(string.format("%s - %s", tostring(title), tostring(content)))
     end
+end
+
+---------------------------------------------------------
+-- CAMERA & PLAYER HELPERS
+---------------------------------------------------------
+local function safeMouseClick(x, y)
+    if not VirtualInputManager then return end
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.01)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
 end
 
 ---------------------------------------------------------
@@ -812,9 +825,9 @@ local function fishingDoClick()
     local x = math.floor(fishingSavedPosition.x + fishingOffsetX)
     local y = math.floor(fishingSavedPosition.y + fishingOffsetY)
     pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        safeMouseClick(x, y)
         task.wait(0.01)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        safeMouseClick(x, y)
     end)
 end
 local function zone_getTimingBar()
