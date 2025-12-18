@@ -2,28 +2,8 @@
 -- Versi: Fully Integrated UI
 -- WARNING: Use at your own risk.
 ---------------------------------------------------------
--- TASK LIBRARY FALLBACK (WAJIB PALING ATAS)
----------------------------------------------------------
-print("Initializing task library fallback...")
-if not task then
-    task = {}
-    function task.wait(t)
-        return wait(t)
-    end
-    function task.spawn(fn)
-        return coroutine.wrap(fn)()
-    end
-    function task.delay(t, fn)
-        coroutine.wrap(function()
-            wait(t)
-            fn()
-        end)()
-    end
-end
----------------------------------------------------------
 -- SERVICES
 ---------------------------------------------------------
-print("Getting services...")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -43,11 +23,8 @@ local Camera = nil
 task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
-    defaultFOV = Camera.FieldOfView
 end)
 
-
-print("SCRIPT START - BEFORE BRING")
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
@@ -146,7 +123,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = 70 -- default aman
+local defaultFOV = Camera.FieldOfView
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -196,9 +173,9 @@ local RECAST_DELAY = 2
 local MAX_RECENT_SECS = 5
 local fishingLoopThread = nil
 
--- Bring Item state
+-- Bring Item
 local BringHeight = 20
-local selectedLocation = "Player"
+
 
 -- UI & HUD
 local Window
@@ -245,30 +222,13 @@ local function notifyUI(title, content, duration, icon)
 end
 
 ---------------------------------------------------------
--- CAMERA & PLAYER HELPERS
+-- BRING ITEM HELPERS
 ---------------------------------------------------------
-local function safeMouseClick(x, y)
-    if not VirtualInputManager then return end
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.01)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
-    end)
-end
-
----------------------------------------------------------
--- BRING ITEM HELPERS (SAFE)
----------------------------------------------------------
-local function getBringTargetPosition()
-    local char = Players.LocalPlayer.Character
-    if not char then return nil end
-
-    local hrp = char:FindFirstChild("HumanoidRootPart")
+local function getBringBasePosition()
+    local hrp = getRoot()
     if not hrp then return nil end
-
     return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
 end
-
 
 local function getBringDropCFrame(basePos, index)
     local angle = (index - 1) * (math.pi * 2 / 12)
@@ -281,6 +241,24 @@ local function getBringDropCFrame(basePos, index)
             math.sin(angle) * radius
         )
     )
+end
+
+local function resolveBringBasePosition(location)
+    if location == "Fire" then
+        local fire = Workspace:FindFirstChild("Map")
+            and Workspace.Map:FindFirstChild("Campground")
+            and Workspace.Map.Campground:FindFirstChild("MainFire")
+        local part = fire and fire:FindFirstChildWhichIsA("BasePart", true)
+        return part and (part.Position + Vector3.new(0, BringHeight, 0))
+    end
+
+    if location == "Workbench" then
+        if ensureScrapperTarget and ensureScrapperTarget() and ScrapperTarget then
+            return ScrapperTarget.Position + Vector3.new(0, BringHeight, 0)
+        end
+    end
+
+    return getBringBasePosition() -- Player (default)
 end
 
 ---------------------------------------------------------
@@ -438,106 +416,6 @@ local function startMiniHudLoop()
 end
 
 ---------------------------------------------------------
--- BRING ITEM CORE (SELF-CONTAINED & SAFE)
----------------------------------------------------------
-local function bringItems(itemList, selectedItems, location)
-    location = location or "Player"
-    -- Safety: basic validation
-    if type(itemList) ~= "table" or type(selectedItems) ~= "table" then
-        return
-    end
-
-    -- Get folder Items (lazy & safe)
-    local itemsFolder = Workspace:FindFirstChild("Items")
-    if not itemsFolder then
-        notifyUI("Bring Item", "Folder Items belum ada.", 4, "alert-triangle")
-        return
-    end
-
-    -- Get remotes (lazy & safe)
-    local remotes = ReplicatedStorage:FindFirstChild("RemoteEvents")
-    if not remotes then
-        notifyUI("Bring Item", "RemoteEvents belum siap.", 4, "alert-triangle")
-        return
-    end
-
-    local startDrag = remotes:FindFirstChild("RequestStartDraggingItem")
-    local stopDrag  = remotes:FindFirstChild("StopDraggingItem")
-    if not startDrag or not stopDrag then
-        notifyUI("Bring Item", "Remote Drag belum lengkap.", 4, "alert-triangle")
-        return
-    end
-
-    -- Get player HRP (lazy & safe)
-    local player = Players.LocalPlayer
-    if not player or not player.Character then return end
-
-    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    -- Resolve wanted item names
-    local wantedNames = {}
-    if table.find(selectedItems, "All") then
-        for _, name in ipairs(itemList) do
-            if name ~= "All" then
-                table.insert(wantedNames, name)
-            end
-        end
-    else
-        for _, name in ipairs(selectedItems) do
-            table.insert(wantedNames, name)
-        end
-    end
-
-    -- Scan items in map
-    local targets = {}
-    for _, item in ipairs(itemsFolder:GetChildren()) do
-        if item:IsA("Model")
-        and item.PrimaryPart
-        and table.find(wantedNames, item.Name) then
-            table.insert(targets, item)
-        end
-    end
-
-    if #targets == 0 then
-        notifyUI("Bring Item", "Item tidak ditemukan.", 4, "search")
-        return
-    end
-
-    notifyUI("Bring Item", #targets .. " item dibawa.", 4, "package")
-
-    -- Drop position base
-    local basePos = hrp.Position + Vector3.new(0, (BringHeight or 20) + 3, 0)
-
-    -- Bring execution
-    for i, item in ipairs(targets) do
-        pcall(function()
-            local angle = (i - 1) * (math.pi * 2 / 12)
-            local radius = 3
-
-            local dropCF = CFrame.new(
-                basePos + Vector3.new(
-                    math.cos(angle) * radius,
-                    0,
-                    math.sin(angle) * radius
-                )
-            )
-
-            startDrag:FireServer(item)
-            task.wait(0.03)
-
-            item:PivotTo(dropCF)
-            task.wait(0.03)
-
-            stopDrag:FireServer(item)
-        end)
-
-        task.wait(0.02)
-    end
-end
-
-
----------------------------------------------------------
 -- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
 ---------------------------------------------------------
 local function teleportToCFrame(cf)
@@ -566,6 +444,62 @@ local function teleportToCFrame(cf)
     hrp.AssemblyAngularVelocity = Vector3.zero
 
     hrp.CFrame = safeCF
+end
+
+---------------------------------------------------------
+-- BRING ITEM CORE
+---------------------------------------------------------
+local function bringItems(itemList, selectedItems, location)
+    if scriptDisabled then return end
+    if not ItemsFolder then return end
+    if not RequestStartDragging or not RequestStopDragging then return end
+    location = location or "Player"
+    local wanted = {}
+
+    if table.find(selectedItems, "All") then
+        for _, name in ipairs(itemList) do
+            if name ~= "All" then
+                table.insert(wanted, name)
+            end
+        end
+    else
+        wanted = selectedItems
+    end
+
+    local targets = {}
+    for _, item in ipairs(ItemsFolder:GetChildren()) do
+        if item:IsA("Model")
+        and item.PrimaryPart
+        and table.find(wanted, item.Name) then
+            table.insert(targets, item)
+        end
+    end
+
+    if #targets == 0 then
+        notifyUI("Bring Item", "Item tidak ditemukan.", 4, "search")
+        return
+    end
+
+    notifyUI("Bring Item", #targets .. " item dibawa.", 4, "package")
+
+    local basePos = getBringBasePosition()
+    if not basePos then return end
+
+    for i, item in ipairs(targets) do
+        if scriptDisabled then break end
+
+        pcall(function()
+            RequestStartDragging:FireServer(item)
+            task.wait(0.03)
+
+            item:PivotTo(getBringDropCFrame(basePos, i))
+            task.wait(0.03)
+
+            RequestStopDragging:FireServer(item)
+        end)
+
+        task.wait(0.02)
+    end
 end
 
 
@@ -827,9 +761,9 @@ local function fishingDoClick()
     local x = math.floor(fishingSavedPosition.x + fishingOffsetX)
     local y = math.floor(fishingSavedPosition.y + fishingOffsetY)
     pcall(function()
-        safeMouseClick(x, y)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
         task.wait(0.01)
-        safeMouseClick(x, y)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
     end)
 end
 local function zone_getTimingBar()
@@ -1706,16 +1640,16 @@ local function createMainUI()
             SideBarWidth = 180,
             HasOutline = true,
         })
-        pcall(function()
-        if Window and typeof(Window.EditOpenButton) == "function" then
-            Window:EditOpenButton({
-                Title = "Papi Dimz |HUB",
-                Icon = "sparkles",
-                Enabled = true
-            })
-        end
-    end)
-
+        Window:EditOpenButton({
+            Title = "Papi Dimz |HUB",
+            Icon = "sparkles",
+            CornerRadius = UDim.new(0, 16),
+            StrokeThickness = 2,
+            Color = ColorSequence.new(Color3.fromRGB(255, 15, 123), Color3.fromRGB(248, 155, 41)),
+            OnlyMobile = true,
+            Enabled = true,
+            Draggable = true,
+        })
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
@@ -2159,11 +2093,8 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
-        pcall(function()
-        if Window and typeof(Window.OnDestroy) == "function" then
-            Window:OnDestroy(resetAll)
-        end
-    end)
+        Window:OnDestroy(resetAll)
+    end
 end
 
 -- INITIAL NON-BLOCKING RESOURCE WATCHERS
@@ -2212,9 +2143,7 @@ if LocalPlayer.Character then
 end
 
 print("[PapiDimz] HUB Loaded - All-in-One")
-print("SEBELUM splash screen")
 splashScreen()
-print("SEBELUM UI")
 createMainUI()
 createMiniHud()
 startMiniHudLoop()
