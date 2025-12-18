@@ -1640,16 +1640,6 @@ local function createMainUI()
             SideBarWidth = 180,
             HasOutline = true,
         })
-        Window:EditOpenButton({
-            Title = "Papi Dimz |HUB",
-            Icon = "sparkles",
-            CornerRadius = UDim.new(0, 16),
-            StrokeThickness = 2,
-            Color = ColorSequence.new(Color3.fromRGB(255, 15, 123), Color3.fromRGB(248, 155, 41)),
-            OnlyMobile = true,
-            Enabled = true,
-            Draggable = true,
-        })
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
