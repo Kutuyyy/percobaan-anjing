@@ -127,7 +127,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = Camera.FieldOfView
+local defaultFOV = 70
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -185,9 +185,25 @@ local scriptStartTime = os.clock()
 local currentFPS = 0
 local auraHeartbeatConnection = nil
 
+local function listHas(list, value)
+    if type(list) ~= "table" then return false end
+    for _, v in ipairs(list) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
+
 ---------------------------------------------------------
 -- BRING ITEMS : WORKBENCH RESOLVER
 ---------------------------------------------------------
+local targetPos = getBringTargetPosition()
+if not targetPos then
+    notifyUI("Bring Item", "Target position invalid.", 3, "alert-triangle")
+    return
+end
+
 local function getBringWorkbenchPos()
     if ScrapperTarget and ScrapperTarget.Parent then
         return ScrapperTarget.Position + Vector3.new(0, BringHeight, 0)
@@ -200,8 +216,12 @@ end
 -- BRING ITEMS : TARGET POSITION
 ---------------------------------------------------------
 local function getBringTargetPosition()
-    local hrp = getRoot()
-    if not hrp then return nil end
+    local hrp = rootPart or getRoot()
+    if not hrp then
+        notifyUI("Bring Item", "Character belum siap.", 3, "alert-triangle")
+        return nil
+    end
+
 
     if selectedLocation == "Player" then
         return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
@@ -259,27 +279,27 @@ local function bringItems(itemList, selectedItems)
     end
 
     local wanted = {}
-    if table.find(selectedItems, "All") then
+    if listHas(selectedItems, "All") then
         for _, name in ipairs(itemList) do
-            if name ~= "All" then wanted[name] = true end
+            if name ~= "All" then
+                wanted[name] = true
+            end
         end
     else
-        for _, name in ipairs(selectedItems) do wanted[name] = true end
+        for _, name in ipairs(selectedItems) do
+            wanted[name] = true
+        end
     end
 
+
     local candidates = {}
+
     for _, item in ipairs(ItemsFolder:GetChildren()) do
-        if item:IsA("Model")
-            and item.PrimaryPart
-            and wanted[item.Name] then
+        if item:IsA("Model") and item.PrimaryPart and wanted[item.Name] then
             table.insert(candidates, item)
         end
     end
 
-    if #candidates == 0 then
-        notifyUI("Bring Item", "Item tidak ditemukan.", 3, "search")
-        return
-    end
 
     notifyUI("Bring Item", (#candidates .. " item dibawa."), 4, "package")
 
@@ -303,6 +323,7 @@ end
 ---------------------------------------------------------
 -- GENERIC HELPERS
 ---------------------------------------------------------
+
 local function tableToSet(list)
     local t = {}
     for _, v in ipairs(list) do t[v] = true end
@@ -951,7 +972,7 @@ local function sacrificeItemToLava(item)
     if not AutoSacEnabled then return end
     if not item or not item.Parent or not item:IsA("Model") or not item.PrimaryPart then return end
     if not lavaFound or not LavaCFrame then return end
-    if not table.find(SacrificeList, item.Name) then return end
+    if not listHas(SacrificeList, item.Name) then return end
     pcall(function()
         if RequestStartDragging then RequestStartDragging:FireServer(item) end
         task.wait(0.1)
@@ -2340,7 +2361,6 @@ backgroundFind(Workspace, "Structures", function(st)
     notifyUI("Init", "Structures ditemukan.", 3, "layers")
     TemporalAccelerometer = st:FindFirstChild("Temporal Accelerometer")
 end)
-task.spawn(function() tryHookDayDisplay() end)
 startGodmodeLoop()
 
 ---------------------------------------------------------
