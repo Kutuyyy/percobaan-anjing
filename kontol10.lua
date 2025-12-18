@@ -26,6 +26,25 @@ task.spawn(function()
 end)
 
 print("SCRIPT START - BEFORE BRING")
+-- ================================
+-- TASK LIBRARY FALLBACK (WAJIB)
+-- ================================
+if not task then
+    task = {}
+    function task.wait(t)
+        return wait(t)
+    end
+    function task.spawn(fn)
+        return coroutine.wrap(fn)()
+    end
+    function task.delay(t, fn)
+        coroutine.wrap(function()
+            wait(t)
+            fn()
+        end)()
+    end
+end
+
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
