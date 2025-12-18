@@ -406,7 +406,8 @@ end
 ---------------------------------------------------------
 -- BRING ITEM CORE (SELF-CONTAINED & SAFE)
 ---------------------------------------------------------
-local function bringItems(itemList, selectedItems)
+local function bringItems(itemList, selectedItems, location)
+    location = location or "Player"
     -- Safety: basic validation
     if type(itemList) ~= "table" or type(selectedItems) ~= "table" then
         return
@@ -2182,7 +2183,9 @@ if LocalPlayer.Character then
 end
 
 print("[PapiDimz] HUB Loaded - All-in-One")
+print("SEBELUM splash screen")
 splashScreen()
+print("SEBELUM UI")
 createMainUI()
 createMiniHud()
 startMiniHudLoop()
