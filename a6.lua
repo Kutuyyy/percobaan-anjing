@@ -185,8 +185,10 @@ local scriptStartTime = os.clock()
 local currentFPS = 0
 local auraHeartbeatConnection = nil
 ---------------------------------------------------------
--- GENERIC HELPERS
+-- GENERIC HELPERS (SHARED: BRING / COOK / SCRAP)
 ---------------------------------------------------------
+
+-- Resolve base CFrame dari lokasi Bring
 local function resolveBringTargetCFrame(location)
     if location == "Player" then
         local char = LocalPlayer.Character
@@ -224,33 +226,70 @@ local function resolveBringTargetCFrame(location)
     return nil, "Location tidak valid"
 end
 
-local function getBringDropCFrame(baseCF, index)
-    local radius = 2
-    local height = 3
-    local angle = (index - 1) * (math.pi / 6)
 
+-- Drop melingkar (dipakai SEMUA: Bring / Cook / Scrap)
+local function getCircularDropCFrame(baseCF, index, radius, height)
+    if typeof(baseCF) ~= "CFrame" then return nil end
+
+    radius = radius or 2
+    height = height or 3
+
+    local angle = (index - 1) * (math.pi / 6)
     local offset = Vector3.new(
         math.cos(angle) * radius,
         height,
         math.sin(angle) * radius
     )
 
-    -- ✅ BENAR
     return baseCF * CFrame.new(offset)
 end
 
 
+-- Drag + Pivot helper (1 pintu)
+local function moveItemToCFrame(item, targetCF)
+    if not item or not item.Parent then return false end
+    if not item:IsA("Model") then return false end
+    if not item.PrimaryPart then return false end
+    if typeof(targetCF) ~= "CFrame" then return false end
+
+    pcall(function()
+        if RequestStartDragging then
+            RequestStartDragging:FireServer(item)
+        end
+    end)
+
+    task.wait(0.03)
+
+    pcall(function()
+        item:PivotTo(targetCF)
+    end)
+
+    task.wait(0.03)
+
+    pcall(function()
+        if RequestStopDragging then
+            RequestStopDragging:FireServer(item)
+        end
+    end)
+
+    return true
+end
 
 
+-- Utility helpers lain (tetap)
 local function tableToSet(list)
     local t = {}
-    for _, v in ipairs(list) do t[v] = true end
+    for _, v in ipairs(list) do
+        t[v] = true
+    end
     return t
 end
+
 local function trim(s)
     if type(s) ~= "string" then return s end
     return s:match("^%s*(.-)%s*$")
 end
+
 local function getGuiParent()
     return LocalPlayer:WaitForChild("PlayerGui")
 end
@@ -265,15 +304,22 @@ local function getInstancePath(inst)
     end
     return table.concat(parts, ".")
 end
+
 local function notifyUI(title, content, duration, icon)
     if WindUI then
         pcall(function()
-            WindUI:Notify({ Title = title or "Info", Content = content or "", Duration = duration or 4, Icon = icon or "info" })
+            WindUI:Notify({
+                Title = title or "Info",
+                Content = content or "",
+                Duration = duration or 4,
+                Icon = icon or "info"
+            })
         end)
     else
         createFallbackNotify(string.format("%s - %s", tostring(title), tostring(content)))
     end
 end
+
 
 ---------------------------------------------------------
 -- MINI HUD & SPLASH
@@ -736,27 +782,10 @@ local function bringItems(fullList, selectedList, location)
     task.spawn(function()
         for i, item in ipairs(candidates) do
             if item and item.Parent and item.PrimaryPart then
-                local dropCF = getBringDropCFrame(baseCF, i)
-
-                pcall(function()
-                    if RequestStartDragging then
-                        RequestStartDragging:FireServer(item)
-                    end
-                end)
-
-                task.wait(0.03)
-
-                pcall(function()
-                    item:PivotTo(dropCF)
-                end)
-
-                task.wait(0.03)
-
-                pcall(function()
-                    if RequestStopDragging then
-                        RequestStopDragging:FireServer(item)
-                    end
-                end)
+                local dropCF = getCircularDropCFrame(baseCF, i, 2, BringHeight)
+                if dropCF then
+                    moveItemToCFrame(item, dropCF)
+                end
 
                 task.wait(0.03)
             end
@@ -1086,7 +1115,10 @@ local function cookOnce()
                         local entry = candidates[i]
                         local item = entry.instance
                         if item and item.Parent then
-                            local dropCF = getCookDropCFrame(base, i)
+                            local dropCF = getCircularDropCFrame(base.CFrame, i, 2, 3)
+                            if dropCF then
+                                moveItemToCFrame(item, dropCF)
+                            end
                             pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
                             task.wait(0.03)
                             pcall(function() item:PivotTo(dropCF) end)
@@ -1168,7 +1200,10 @@ local function scrapOnceFullPass()
                 if not ScrapEnabled or scriptDisabled then return end
                 local item = entry.instance
                 if item and item.Parent then
-                    local dropCF = getScrapDropCFrame(scrapBase, i)
+                    local dropCF = getCircularDropCFrame(scrapBase.CFrame, i, 1.5, 6)
+                    if dropCF then
+                        moveItemToCFrame(item, dropCF)
+                    end
                     pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
                     task.wait(0.02)
                     pcall(function() item:PivotTo(dropCF) end)
