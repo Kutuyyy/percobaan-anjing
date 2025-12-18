@@ -679,7 +679,7 @@ end
 ----------------------------------------------------------
 -- BRING ITEMS FUNCTION
 ----------------------------------------------------------
-function bringItems(fullList, selectedList, location)
+local function bringItems(fullList, selectedList, location)
     if scriptDisabled then return end
     if not ItemsFolder then
         notifyUI("Bring Items", "Items folder belum siap.", 4, "alert-triangle")
