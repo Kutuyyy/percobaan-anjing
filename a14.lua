@@ -28,17 +28,7 @@ end)
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
-local function findWithTimeout(parent, name, timeout, pollInterval)
-    timeout = timeout or 6
-    pollInterval = pollInterval or 0.25
-    local t0 = tick()
-    while tick() - t0 < timeout do
-        local v = parent:FindFirstChild(name)
-        if v then return v end
-        task.wait(pollInterval)
-    end
-    return nil
-end
+
 local function backgroundFind(parent, name, callback, pollInterval)
     pollInterval = pollInterval or 0.5
     task.spawn(function()
@@ -52,6 +42,19 @@ local function backgroundFind(parent, name, callback, pollInterval)
         end
     end)
 end
+
+local function findWithTimeout(parent, name, timeout, pollInterval)
+    timeout = timeout or 6
+    pollInterval = pollInterval or 0.25
+    local t0 = tick()
+    while tick() - t0 < timeout do
+        local v = parent:FindFirstChild(name)
+        if v then return v end
+        task.wait(pollInterval)
+    end
+    return nil
+end
+
 ---------------------------------------------------------
 -- LOAD WINDUI
 ---------------------------------------------------------
@@ -61,7 +64,7 @@ local function createFallbackNotify(msg)
 end
 do
     local ok, res = pcall(function()
-        return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
     end)
     if ok and res then
         WindUI = res
