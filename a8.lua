@@ -125,7 +125,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
---local defaultFOV = Camera.FieldOfView
+local defaultFOV = 70
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -586,6 +586,10 @@ local function playIdleAnimation()
 end
 local function startFly()
     if flyEnabled or scriptDisabled then return end
+    if not Camera then
+        notifyUI("Fly", "Camera belum siap.", 3, "alert-triangle")
+        return
+    end
     local char = getCharacter()
     rootPart = getRoot()
     if not char or not rootPart then return end
@@ -1125,11 +1129,6 @@ local function cookOnce()
                             if dropCF then
                                 moveItemToCFrame(item, dropCF)
                             end
-                            pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
-                            task.wait(0.03)
-                            pcall(function() item:PivotTo(dropCF) end)
-                            task.wait(0.03)
-                            pcall(function() if RequestStopDragging then RequestStopDragging:FireServer(item) end end)
                             print(string.format("[Cook] %s → %s (dist=%.1f)", item.Name, station.Name, entry.distance))
                             task.wait(0.03)
                         end
@@ -1210,11 +1209,6 @@ local function scrapOnceFullPass()
                     if dropCF then
                         moveItemToCFrame(item, dropCF)
                     end
-                    pcall(function() if RequestStartDragging then RequestStartDragging:FireServer(item) end end)
-                    task.wait(0.02)
-                    pcall(function() item:PivotTo(dropCF) end)
-                    task.wait(0.02)
-                    pcall(function() if RequestStopDragging then RequestStopDragging:FireServer(item) end end)
                     print(string.format("[Scrap] %s → Grinder (dist=%.1f)", item.Name, entry.distance or -1))
                     task.wait(0.02)
                 end
@@ -2216,7 +2210,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     humanoid = char:WaitForChild("Humanoid")
     rootPart = char:WaitForChild("HumanoidRootPart")
     if Camera then
-        defaultFOV = Camera.FieldOfView
+        defaultFOV = (Camera and Camera.FieldOfView) or defaultFOV
     end
     defaultWalkSpeed = humanoid.WalkSpeed
     defaultHipHeight = humanoid.HipHeight
@@ -2230,69 +2224,6 @@ if LocalPlayer.Character then
     rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if humanoid then defaultWalkSpeed = humanoid.WalkSpeed; defaultHipHeight = humanoid.HipHeight end
 end
-
----------------------------------------------------------
--- INITIAL CHARACTER & CAMERA STATE (SAFE INIT)
----------------------------------------------------------
-
--- default nilai fallback (biar tidak nil)
-local defaultWalkSpeed = 16
-local defaultHipHeight = 0
-local defaultFOV = 70
-
--- helper tunggu camera (non-blocking friendly)
-local function waitForCamera(timeout)
-    timeout = timeout or 5
-    local start = os.clock()
-    while not Workspace.CurrentCamera do
-        if os.clock() - start > timeout then
-            return nil
-        end
-        task.wait()
-    end
-    return Workspace.CurrentCamera
-end
-
--- ambil camera dengan aman
-Camera = waitForCamera() or Workspace.CurrentCamera
-
--- init karakter jika sudah ada
-if LocalPlayer.Character then
-    local char = LocalPlayer.Character
-
-    humanoid = char:FindFirstChildOfClass("Humanoid")
-    rootPart = char:FindFirstChild("HumanoidRootPart")
-
-    if humanoid then
-        defaultWalkSpeed = humanoid.WalkSpeed
-        defaultHipHeight = humanoid.HipHeight
-    end
-
-    if Camera then
-        defaultFOV = Camera.FieldOfView
-    end
-end
-
--- update ulang saat respawn
-LocalPlayer.CharacterAdded:Connect(function(char)
-    humanoid = char:WaitForChild("Humanoid")
-    rootPart = char:WaitForChild("HumanoidRootPart")
-
-    task.wait(0.2) -- beri waktu client sync
-
-    if humanoid then
-        defaultWalkSpeed = humanoid.WalkSpeed
-        defaultHipHeight = humanoid.HipHeight
-    end
-
-    if not Camera then
-        Camera = waitForCamera()
-    end
-
-    if Camera then
-        defaultFOV = Camera.FieldOfView
-    end
-end)
 
 ---------------------------------------------------------
 print("[PapiDimz] HUB Loaded - All-in-One")
