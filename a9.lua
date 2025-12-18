@@ -842,6 +842,7 @@ local function fishingHideOverlay()
 end
 local function fishingDoClick()
     if not fishingSavedPosition then return end
+    if not VirtualInputManager then return end -- 🔧 WAJIB
     local x = math.floor(fishingSavedPosition.x + fishingOffsetX)
     local y = math.floor(fishingSavedPosition.y + fishingOffsetY)
     pcall(function()
@@ -2199,7 +2200,6 @@ backgroundFind(Workspace, "Structures", function(st)
     notifyUI("Init", "Structures ditemukan.", 3, "layers")
     TemporalAccelerometer = st:FindFirstChild("Temporal Accelerometer")
 end)
-task.spawn(function() tryHookDayDisplay() end)
 startGodmodeLoop()
 
 ---------------------------------------------------------
