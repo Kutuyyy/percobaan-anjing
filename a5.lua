@@ -235,8 +235,10 @@ local function getBringDropCFrame(baseCF, index)
         math.sin(angle) * radius
     )
 
-    return baseCF + offset
+    -- ✅ BENAR
+    return baseCF * CFrame.new(offset)
 end
+
 
 
 
