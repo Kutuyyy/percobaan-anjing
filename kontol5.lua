@@ -2,72 +2,27 @@
 -- Versi: Fully Integrated UI
 -- WARNING: Use at your own risk.
 ---------------------------------------------------------
--- BULLETPROOF INIT (Lobby + In-Game Safe)
+-- SERVICES
 ---------------------------------------------------------
-print("[INIT] Script start")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local VirtualInputManager
+pcall(function()
+    VirtualInputManager = game:GetService("VirtualInputManager")
+end)
 
--- Services (AMAN)
-local Players              = game:GetService("Players")
-local ReplicatedStorage    = game:GetService("ReplicatedStorage")
-local Workspace            = game:GetService("Workspace")
-local RunService           = game:GetService("RunService")
-local UserInputService     = game:GetService("UserInputService")
-local HttpService          = game:GetService("HttpService")
-local Lighting             = game:GetService("Lighting")
-local VirtualUser          = game:GetService("VirtualUser")
-
--- Player
 local LocalPlayer = Players.LocalPlayer
-
--- JANGAN ambil Character di global
-local function getCharacter()
-    return LocalPlayer.Character
-end
-
-local function getHumanoidRootPart()
-    local char = getCharacter()
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
-local function getRoot()
-    return getHumanoidRootPart()
-end
-
-local function getHumanoid()
-    local char = getCharacter()
-    return char and char:FindFirstChild("Humanoid")
-end
-
----------------------------------------------------------
--- ANTI AFK (EARLY-SAFE INIT)
----------------------------------------------------------
-local function initAntiAFK()
-    LocalPlayer.Idled:Connect(function()
-        if scriptDisabled then return end
-        if not AntiAFKEnabled then return end
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-    end)
-end
-
-initAntiAFK()
-
----------------------------------------------------------
--- DEFERRED / LAZY OBJECTS (JANGAN AKSES LANGSUNG)
----------------------------------------------------------
 local Character = nil
-local Humanoid = nil
-local HumanoidRootPart = nil
 local Camera = nil
-local VirtualInputManager = nil
-
----------------------------------------------------------
--- SAFE CAMERA INIT
----------------------------------------------------------
 task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
-    print("[INIT] Camera ready")
 end)
 
 ---------------------------------------------------------
@@ -168,7 +123,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = 70 -- fallback aman
+local defaultFOV = Camera.FieldOfView
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -217,74 +172,19 @@ local lastRecastAt = 0
 local RECAST_DELAY = 2
 local MAX_RECENT_SECS = 5
 local fishingLoopThread = nil
+
+-- Bring Item state
+local BringHeight = 20
+local selectedLocation = "Player"
+
 -- UI & HUD
 local Window
 local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
 local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
 
-local selectedLocation = "Player"
-local BringHeight = 20
-
 local scriptStartTime = os.clock()
 local currentFPS = 0
 local auraHeartbeatConnection = nil
----------------------------------------------------------
--- SAFE CHARACTER INIT
----------------------------------------------------------
-local function onCharacterAdded(char)
-    Character = char
-    Humanoid = char:WaitForChild("Humanoid", 5)
-    HumanoidRootPart = char:WaitForChild("HumanoidRootPart", 5)
-    print("[INIT] Character ready")
-end
-
-if LocalPlayer.Character then
-    onCharacterAdded(LocalPlayer.Character)
-end
-LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
-
----------------------------------------------------------
--- SAFE VIRTUAL INPUT (OPTIONAL)
----------------------------------------------------------
-task.spawn(function()
-    pcall(function()
-        VirtualInputManager = game:GetService("VirtualInputManager")
-        print("[INIT] VirtualInputManager ready")
-    end)
-end)
-
----------------------------------------------------------
--- SAFE GUI PARENT (NO COREGUI, NO GETHUI)
----------------------------------------------------------
-local function getGuiParent()
-    return LocalPlayer:WaitForChild("PlayerGui")
-end
-
----------------------------------------------------------
--- SAFE READY CHECK (UNTUK UI / FITUR BERAT)
----------------------------------------------------------
-local function waitUntilReady(timeout)
-    timeout = timeout or 10
-    local t0 = tick()
-    while tick() - t0 < timeout do
-        if Character and HumanoidRootPart and Camera then
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
----------------------------------------------------------
--- CAPTURE DEFAULT CAMERA FOV (SAFE)
----------------------------------------------------------
-task.spawn(function()
-    waitUntilReady(8)
-    if Camera then
-        defaultFOV = Camera.FieldOfView
-    end
-end)
-
 ---------------------------------------------------------
 -- GENERIC HELPERS
 ---------------------------------------------------------
@@ -296,6 +196,9 @@ end
 local function trim(s)
     if type(s) ~= "string" then return s end
     return s:match("^%s*(.-)%s*$")
+end
+local function getGuiParent()
+    return LocalPlayer:WaitForChild("PlayerGui")
 end
 
 local function getInstancePath(inst)
@@ -316,6 +219,28 @@ local function notifyUI(title, content, duration, icon)
     else
         createFallbackNotify(string.format("%s - %s", tostring(title), tostring(content)))
     end
+end
+
+---------------------------------------------------------
+-- BRING ITEM HELPERS (SAFE)
+---------------------------------------------------------
+local function getBringTargetPosition()
+    local hrp = getRoot()
+    if not hrp then return nil end
+    return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
+end
+
+local function getBringDropCFrame(basePos, index)
+    local angle = (index - 1) * (math.pi * 2 / 12)
+    local radius = 3
+
+    return CFrame.new(
+        basePos + Vector3.new(
+            math.cos(angle) * radius,
+            0,
+            math.sin(angle) * radius
+        )
+    )
 end
 
 ---------------------------------------------------------
@@ -473,105 +398,20 @@ local function startMiniHudLoop()
 end
 
 ---------------------------------------------------------
--- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
+-- BRING ITEM CORE (INTEGRATED)
 ---------------------------------------------------------
-local function teleportToCFrame(cf)
-    if not cf then return end
-    local hrp = getHumanoidRootPart()
-    if not hrp then return end
-
-    hrp.CFrame = cf + Vector3.new(0,4,0)
-end
-
-
----------------------------------------------------------
--- BRING ITEM CORE (HUB VERSION)
----------------------------------------------------------
-
--- Cache Scrapper target (dipakai Workbench)
-local ScrapperTarget = nil
-local function getScrapperTarget()
-    if ScrapperTarget and ScrapperTarget.Parent then
-        return ScrapperTarget
-    end
-
-    local map = Workspace:FindFirstChild("Map")
-    local camp = map and map:FindFirstChild("Campground")
-    local scrapper = camp and camp:FindFirstChild("Scrapper")
-    local movers = scrapper and scrapper:FindFirstChild("Movers")
-    local right = movers and movers:FindFirstChild("Right")
-    local grinder = right and right:FindFirstChild("GrindersRight")
-
-    if grinder and grinder:IsA("BasePart") then
-        ScrapperTarget = grinder
-        return grinder
-    end
-
-    return nil
-end
-
--- Target posisi drop
-local function getBringTargetPosition(location)
-    local hrp = getHumanoidRootPart()
-    if not hrp then return nil end
-
-    if location == "Player" then
-        return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
-
-    elseif location == "Workbench" then
-        local s = getScrapperTarget()
-        if s then
-            return s.Position + Vector3.new(0, BringHeight, 0)
-        end
-
-    elseif location == "Fire" then
-        local fire = Workspace:FindFirstChild("Map")
-            and Workspace.Map:FindFirstChild("Campground")
-            and Workspace.Map.Campground:FindFirstChild("MainFire")
-            and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
-
-        if fire then
-            return fire.Position + Vector3.new(0, BringHeight, 0)
-        end
-    end
-
-    -- fallback aman
-    return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
-end
-
--- Drop melingkar biar rapi & anti stuck
-local function getBringDropCFrame(basePos, index)
-    local angle = (index - 1) * (math.pi * 2 / 12)
-    local radius = 3
-
-    return CFrame.new(
-        basePos + Vector3.new(
-            math.cos(angle) * radius,
-            0,
-            math.sin(angle) * radius
-        )
-    )
-end
-
--- BRING CORE FUNCTION (dipakai semua section)
-function bringItems(sectionItemList, selectedItems, location)
+local function bringItems(itemList, selectedItems)
     if scriptDisabled then return end
-    if not ItemsFolder then
-        notifyUI("Bring Item", "Items folder belum siap.", 4, "alert-triangle")
+    if not ItemsFolder or not RequestStartDragging or not RequestStopDragging then
+        notifyUI("Bring Item", "Item system belum siap.", 4, "alert-triangle")
         return
     end
 
-    local targetPos = getBringTargetPosition(location)
-    if not targetPos then
-        notifyUI("Bring Item", "Target posisi tidak ditemukan.", 4, "alert-triangle")
-        return
-    end
-
-    -- Resolve item yang diinginkan
     local wantedNames = {}
 
+    -- Handle "All"
     if table.find(selectedItems, "All") then
-        for _, name in ipairs(sectionItemList) do
+        for _, name in ipairs(itemList) do
             if name ~= "All" then
                 table.insert(wantedNames, name)
             end
@@ -580,61 +420,85 @@ function bringItems(sectionItemList, selectedItems, location)
         wantedNames = selectedItems
     end
 
-    -- Scan item
-    local candidates = {}
+    -- Scan items
+    local targets = {}
     for _, item in ipairs(ItemsFolder:GetChildren()) do
         if item:IsA("Model")
-            and item.PrimaryPart
-            and table.find(wantedNames, item.Name)
-        then
-            table.insert(candidates, item)
+        and item.PrimaryPart
+        and table.find(wantedNames, item.Name) then
+            table.insert(targets, item)
         end
     end
 
-    if #candidates == 0 then
+    if #targets == 0 then
         notifyUI("Bring Item", "Item tidak ditemukan.", 4, "search")
         return
     end
 
-    notifyUI(
-        "Bring Item",
-        string.format("%d item → %s", #candidates, tostring(location)),
-        5,
-        "zap"
-    )
+    notifyUI("Bring Item", #targets .. " item dibawa.", 4, "package")
 
-    -- Eksekusi bring
-    for i, item in ipairs(candidates) do
+    local basePos = getBringTargetPosition()
+    if not basePos then return end
+
+    for i, item in ipairs(targets) do
         if scriptDisabled then break end
-        if not item or not item.Parent then continue end
-
         pcall(function()
-            if RequestStartDragging then
-                RequestStartDragging:FireServer(item)
-            end
+            RequestStartDragging:FireServer(item)
+            task.wait(0.03)
+            item:PivotTo(getBringDropCFrame(basePos, i))
+            task.wait(0.03)
+            RequestStopDragging:FireServer(item)
         end)
-
-        task.wait(0.03)
-
-        pcall(function()
-            item:PivotTo(getBringDropCFrame(targetPos, i))
-        end)
-
-        task.wait(0.03)
-
-        pcall(function()
-            if RequestStopDragging then
-                RequestStopDragging:FireServer(item)
-            end
-        end)
+        task.wait(0.02)
     end
 end
 
+---------------------------------------------------------
+-- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
+---------------------------------------------------------
+local function teleportToCFrame(cf)
+    if scriptDisabled then return end
+    if not cf or typeof(cf) ~= "CFrame" then
+        warn("[Teleport] CFrame tidak valid.")
+        return
+    end
+
+    local char = LocalPlayer.Character
+    if not char then
+        warn("[Teleport] Character belum siap.")
+        return
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        warn("[Teleport] HumanoidRootPart tidak ditemukan.")
+        return
+    end
+
+    -- Anti stuck
+    local safeCF = cf * CFrame.new(0, 3, 0)
+
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    hrp.CFrame = safeCF
+end
 
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
 ---------------------------------------------------------
+local function getCharacter()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+local function getHumanoid()
+    local char = getCharacter()
+    return char and char:FindFirstChild("Humanoid")
+end
+local function getRoot()
+    local char = getCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
 local function zeroVelocities(part)
     if part and part:IsA("BasePart") then
         pcall(function()
@@ -647,27 +511,11 @@ local function applyFOV()
     if fovEnabled then Camera.FieldOfView = fovValue else Camera.FieldOfView = defaultFOV end
 end
 local function applyWalkspeed()
-    local h = getHumanoid()
-    if not h then return end
-
-    if walkEnabled then
-        h.WalkSpeed = math.clamp(walkSpeedValue, 16, 200)
-    else
-        h.WalkSpeed = defaultWalkSpeed
-    end
+    if humanoid and walkEnabled then humanoid.WalkSpeed = math.clamp(walkSpeedValue, 16, 200) else if humanoid then humanoid.WalkSpeed = defaultWalkSpeed end end
 end
-
 local function applyHipHeight()
-    local h = getHumanoid()
-    if not h then return end
-
-    if hipEnabled then
-        h.HipHeight = hipValue
-    else
-        h.HipHeight = defaultHipHeight
-    end
+    if humanoid and hipEnabled then humanoid.HipHeight = hipValue else if humanoid then humanoid.HipHeight = defaultHipHeight end end
 end
-
 local function updateNoclipConnection()
     local should = (noclipManualEnabled or flyEnabled)
     if should and not noclipConn then
@@ -700,35 +548,20 @@ local function setVisibility(on)
     end
 end
 local function playIdleAnimation()
-    if idleTrack then
-        idleTrack:Stop()
-        idleTrack = nil
-    end
-
-    local h = getHumanoid()
-    if not h then return end
-
+    if idleTrack then idleTrack:Stop() end
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://180435571"
-
-    idleTrack = h:LoadAnimation(anim)
+    idleTrack = humanoid:LoadAnimation(anim)
     idleTrack.Priority = Enum.AnimationPriority.Core
     idleTrack.Looped = true
     idleTrack:Play()
-
-    h.PlatformStand = true
 end
-
 local function startFly()
     if flyEnabled or scriptDisabled then return end
-
     local char = getCharacter()
-    local rootPart = getRoot()
+    rootPart = getRoot()
     if not char or not rootPart then return end
-
     flyEnabled = true
-    rootPart.Anchored = true
-
     if next(originalTransparency) == nil then
         for _, part in ipairs(char:GetDescendants()) do
             if part:IsA("BasePart") or (part:IsA("MeshPart") and part.Name == "Handle") then
@@ -736,88 +569,56 @@ local function startFly()
             end
         end
     end
-
     setVisibility(false)
-
-    local h = getHumanoid()
-    if h then h.PlatformStand = true end
-
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = false end
-    end
-
+    rootPart.Anchored = true
+    humanoid.PlatformStand = true
+    for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
     playIdleAnimation()
     updateNoclipConnection()
-
     flyConn = RunService.RenderStepped:Connect(function(dt)
-        local rootPart = getRoot()
         if not flyEnabled or not rootPart then stopFly(); return end
-
-        local move = Vector3.zero
+        local move = Vector3.new(0,0,0)
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then move += Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then move -= Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.A) then move -= Camera.CFrame.RightVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.D) then move += Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.yAxis end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.yAxis end
-
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move += Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move -= Vector3.new(0,1,0) end
         if move.Magnitude > 0 then
-            rootPart.CFrame += move.Unit * math.clamp(flySpeedValue, 16, 200) * dt
+            move = move.Unit * math.clamp(flySpeedValue, 16, 200) * dt
+            rootPart.CFrame += move
         end
-
         rootPart.CFrame = CFrame.new(rootPart.Position) * Camera.CFrame.Rotation
         zeroVelocities(rootPart)
     end)
-
     notifyUI("Fly ON", "Ultimate Stealth Fly aktif!", 3, "plane")
 end
-
 local function stopFly()
     if not flyEnabled then return end
     flyEnabled = false
-
     if flyConn then flyConn:Disconnect(); flyConn = nil end
-
     local char = getCharacter()
-    local rootPart = getRoot()
-    if not char or not rootPart then return end
-
+    rootPart = getRoot()
     if idleTrack then idleTrack:Stop(); idleTrack = nil end
-
-    local h = getHumanoid()
-    if h then h.PlatformStand = false end
-
+    humanoid.PlatformStand = false
     setVisibility(false)
-
     local targetCFrame = rootPart.CFrame
-
     local bp = Instance.new("BodyPosition")
     bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
     bp.P = 30000
     bp.Position = targetCFrame.Position
     bp.Parent = rootPart
-
     local bg = Instance.new("BodyGyro")
     bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
     bg.P = 30000
     bg.CFrame = targetCFrame
     bg.Parent = rootPart
-
     rootPart.Anchored = false
-
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = true end
-    end
-
-    task.delay(0.1, function()
-        if bp.Parent then bp:Destroy() end
-        if bg.Parent then bg:Destroy() end
-    end)
-
+    for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end
+    task.delay(0.1, function() if bp and bp.Parent then bp:Destroy() end if bg and bg.Parent then bg:Destroy() end end)
     updateNoclipConnection()
     notifyUI("Fly OFF", "Fly dimatikan.", 3, "plane")
 end
-
 local function startTPWalk()
     if tpWalkEnabled or scriptDisabled then return end
     tpWalkEnabled = true
@@ -1178,9 +979,7 @@ end
 local function collectCookCandidates(basePart, targetSet, maxCount)
     local best = {}
     if not ItemsFolder then return {} end
-    if not ItemsFolder then return end
     for _, item in ipairs(ItemsFolder:GetChildren()) do
-
         if item:IsA("Model")
             and item.PrimaryPart
             and targetSet[item.Name]
@@ -1333,7 +1132,7 @@ local function startScrapLoop()
 end
 
 ---------------------------------------------------------
--- GODMODE
+-- GODMODE & ANTI AFK
 ---------------------------------------------------------
 local function startGodmodeLoop()
     task.spawn(function()
@@ -1348,6 +1147,14 @@ local function startGodmodeLoop()
             end
             task.wait(8)
         end
+    end)
+end
+local function initAntiAFK()
+    LocalPlayer.Idled:Connect(function()
+        if scriptDisabled then return end
+        if not AntiAFKEnabled then return end
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
     end)
 end
 
@@ -1815,24 +1622,16 @@ local function createMainUI()
             SideBarWidth = 180,
             HasOutline = true,
         })
-        pcall(function()
-            if type(Window.EditOpenButton) == "function" then
-                Window.EditOpenButton({
-                    Title = "Papi Dimz |HUB",
-                    Icon = "sparkles",
-                    CornerRadius = UDim.new(0, 16),
-                    StrokeThickness = 2,
-                    Color = ColorSequence.new(
-                        Color3.fromRGB(255, 15, 123),
-                        Color3.fromRGB(248, 155, 41)
-                    ),
-                    OnlyMobile = true,
-                    Enabled = true,
-                    Draggable = true,
-                })
-            end
-        end)
-
+        Window:EditOpenButton({
+            Title = "Papi Dimz |HUB",
+            Icon = "sparkles",
+            CornerRadius = UDim.new(0, 16),
+            StrokeThickness = 2,
+            Color = ColorSequence.new(Color3.fromRGB(255, 15, 123), Color3.fromRGB(248, 155, 41)),
+            OnlyMobile = true,
+            Enabled = true,
+            Draggable = true,
+        })
         mainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
         localTab = Window:Tab({ Title = "Local Player", Icon = "user" })
         fishingTab = Window:Tab({ Title = "Fishing", Icon = "fish" })
@@ -2308,39 +2107,29 @@ startGodmodeLoop()
 ---------------------------------------------------------
 -- INIT
 ---------------------------------------------------------
-local function applyLocalPlayerState()
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+    defaultWalkSpeed = humanoid.WalkSpeed
+    defaultHipHeight = humanoid.HipHeight
     applyWalkspeed()
     applyHipHeight()
     applyFOV()
-
-    if flyEnabled then
-        task.delay(0.15, startFly)
-    end
-end
-
+    if flyEnabled then task.delay(0.2, startFly) end
+end)
 if LocalPlayer.Character then
-    applyLocalPlayerState()
+    humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+    rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if humanoid then defaultWalkSpeed = humanoid.WalkSpeed; defaultHipHeight = humanoid.HipHeight end
 end
 
 print("[PapiDimz] HUB Loaded - All-in-One")
-task.spawn(function()
-    if not waitUntilReady(8) then
-        warn("[INIT] Timeout menunggu character/camera")
-    end
+splashScreen()
+createMainUI()
+createMiniHud()
+startMiniHudLoop()
+initAntiAFK()
+-- (all original background watchers and loops start here)
 
-    splashScreen()
-    createMainUI()
-    createMiniHud()
-    startMiniHudLoop()
-
-    print("[INIT] UI initialized")
-end)
-
-task.delay(1.5, function()
-    notifyUI(
-        "Papi Dimz |HUB",
-        "Semua fitur loaded: Main, Local Player, Fishing, Farm, Tools, Night, Webhook, Health",
-        6,
-        "sparkles"
-    )
-end)
+notifyUI("Papi Dimz |HUB", "Semua fitur loaded: Main, Local Player, Fishing, Farm, Tools, Night, Webhook, Health", 6, "sparkles")
