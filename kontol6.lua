@@ -25,6 +25,7 @@ task.spawn(function()
     Camera = Workspace.CurrentCamera
 end)
 
+print("SCRIPT START - BEFORE BRING")
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
@@ -225,10 +226,15 @@ end
 -- BRING ITEM HELPERS (SAFE)
 ---------------------------------------------------------
 local function getBringTargetPosition()
-    local hrp = getRoot()
+    local char = Players.LocalPlayer.Character
+    if not char then return nil end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
+
     return hrp.Position + Vector3.new(0, BringHeight + 3, 0)
 end
+
 
 local function getBringDropCFrame(basePos, index)
     local angle = (index - 1) * (math.pi * 2 / 12)
@@ -398,18 +404,44 @@ local function startMiniHudLoop()
 end
 
 ---------------------------------------------------------
--- BRING ITEM CORE (INTEGRATED)
+-- BRING ITEM CORE (SELF-CONTAINED & SAFE)
 ---------------------------------------------------------
 local function bringItems(itemList, selectedItems)
-    if scriptDisabled then return end
-    if not ItemsFolder or not RequestStartDragging or not RequestStopDragging then
-        notifyUI("Bring Item", "Item system belum siap.", 4, "alert-triangle")
+    -- Safety: basic validation
+    if type(itemList) ~= "table" or type(selectedItems) ~= "table" then
         return
     end
 
-    local wantedNames = {}
+    -- Get folder Items (lazy & safe)
+    local itemsFolder = Workspace:FindFirstChild("Items")
+    if not itemsFolder then
+        notifyUI("Bring Item", "Folder Items belum ada.", 4, "alert-triangle")
+        return
+    end
 
-    -- Handle "All"
+    -- Get remotes (lazy & safe)
+    local remotes = ReplicatedStorage:FindFirstChild("RemoteEvents")
+    if not remotes then
+        notifyUI("Bring Item", "RemoteEvents belum siap.", 4, "alert-triangle")
+        return
+    end
+
+    local startDrag = remotes:FindFirstChild("RequestStartDraggingItem")
+    local stopDrag  = remotes:FindFirstChild("StopDraggingItem")
+    if not startDrag or not stopDrag then
+        notifyUI("Bring Item", "Remote Drag belum lengkap.", 4, "alert-triangle")
+        return
+    end
+
+    -- Get player HRP (lazy & safe)
+    local player = Players.LocalPlayer
+    if not player or not player.Character then return end
+
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Resolve wanted item names
+    local wantedNames = {}
     if table.find(selectedItems, "All") then
         for _, name in ipairs(itemList) do
             if name ~= "All" then
@@ -417,12 +449,14 @@ local function bringItems(itemList, selectedItems)
             end
         end
     else
-        wantedNames = selectedItems
+        for _, name in ipairs(selectedItems) do
+            table.insert(wantedNames, name)
+        end
     end
 
-    -- Scan items
+    -- Scan items in map
     local targets = {}
-    for _, item in ipairs(ItemsFolder:GetChildren()) do
+    for _, item in ipairs(itemsFolder:GetChildren()) do
         if item:IsA("Model")
         and item.PrimaryPart
         and table.find(wantedNames, item.Name) then
@@ -437,21 +471,36 @@ local function bringItems(itemList, selectedItems)
 
     notifyUI("Bring Item", #targets .. " item dibawa.", 4, "package")
 
-    local basePos = getBringTargetPosition()
-    if not basePos then return end
+    -- Drop position base
+    local basePos = hrp.Position + Vector3.new(0, (BringHeight or 20) + 3, 0)
 
+    -- Bring execution
     for i, item in ipairs(targets) do
-        if scriptDisabled then break end
         pcall(function()
-            RequestStartDragging:FireServer(item)
+            local angle = (i - 1) * (math.pi * 2 / 12)
+            local radius = 3
+
+            local dropCF = CFrame.new(
+                basePos + Vector3.new(
+                    math.cos(angle) * radius,
+                    0,
+                    math.sin(angle) * radius
+                )
+            )
+
+            startDrag:FireServer(item)
             task.wait(0.03)
-            item:PivotTo(getBringDropCFrame(basePos, i))
+
+            item:PivotTo(dropCF)
             task.wait(0.03)
-            RequestStopDragging:FireServer(item)
+
+            stopDrag:FireServer(item)
         end)
+
         task.wait(0.02)
     end
 end
+
 
 ---------------------------------------------------------
 -- TELEPORT CORE FUNCTION (SAFE) - NO UI CALL
