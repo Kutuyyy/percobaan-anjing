@@ -4,6 +4,7 @@
 ---------------------------------------------------------
 -- TASK LIBRARY FALLBACK (WAJIB PALING ATAS)
 ---------------------------------------------------------
+print("Initializing task library fallback...")
 if not task then
     task = {}
     function task.wait(t)
@@ -22,6 +23,7 @@ end
 ---------------------------------------------------------
 -- SERVICES
 ---------------------------------------------------------
+print("Getting services...")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -2157,8 +2159,11 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
-        Window:OnDestroy(resetAll)
-    end
+        pcall(function()
+        if Window and typeof(Window.OnDestroy) == "function" then
+            Window:OnDestroy(resetAll)
+        end
+    end)
 end
 
 -- INITIAL NON-BLOCKING RESOURCE WATCHERS
