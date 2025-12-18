@@ -23,7 +23,9 @@ local Camera = nil
 task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
+    defaultFOV = Camera.FieldOfView
 end)
+
 
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
@@ -123,7 +125,7 @@ local AuraAttackDelay = 0.16
 local AxeIDs = {["Old Axe"] = "3_7367831688",["Good Axe"] = "112_7367831688",["Strong Axe"] = "116_7367831688",Chainsaw = "647_8992824875",Spear = "196_8999010016"}
 local TreeCache = {}
 -- Local Player state
-local defaultFOV = Camera.FieldOfView
+local defaultFOV = 70
 local fovEnabled = false
 local fovValue = 60
 local walkEnabled = false
@@ -526,8 +528,14 @@ local function zeroVelocities(part)
     end
 end
 local function applyFOV()
-    if fovEnabled then Camera.FieldOfView = fovValue else Camera.FieldOfView = defaultFOV end
+    if not Camera then return end
+    if fovEnabled then
+        Camera.FieldOfView = fovValue
+    else
+        Camera.FieldOfView = defaultFOV
+    end
 end
+
 local function applyWalkspeed()
     if humanoid and walkEnabled then humanoid.WalkSpeed = math.clamp(walkSpeedValue, 16, 200) else if humanoid then humanoid.WalkSpeed = defaultWalkSpeed end end
 end
