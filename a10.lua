@@ -28,6 +28,16 @@ end)
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
+local function listHas(list, value)
+    if type(list) ~= "table" then return false end
+    for _, v in ipairs(list) do
+        if v == value then
+            return true
+        end
+    end
+    return false
+end
+
 local function findWithTimeout(parent, name, timeout, pollInterval)
     timeout = timeout or 6
     pollInterval = pollInterval or 0.25
@@ -753,7 +763,7 @@ local function bringItems(fullList, selectedList, location)
 
     -- Build target set
     local targetSet = {}
-    if table.find(selectedList, "All") then
+    if listHas(selectedList, "All") then
         for _, name in ipairs(fullList) do
             if name ~= "All" then
                 targetSet[name] = true
@@ -2174,7 +2184,6 @@ local function createMainUI()
                 pcall(function() Window:Toggle() end)
             end
         end)
-        Window:OnDestroy(resetAll)
     end
 end
 
