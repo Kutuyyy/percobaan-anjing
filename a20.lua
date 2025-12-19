@@ -405,6 +405,131 @@ local function teleportToCFrame(cf)
     hrp.CFrame = safeCF
 end
 
+---------------------------------------------------------
+-- BRING ITEMS FUNCTION (Scrapper-style logic)
+---------------------------------------------------------
+local function resolveBringTargetCFrame()
+    if selectedLocation == "Player" then
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return nil end
+        return hrp.CFrame * CFrame.new(0, BringHeight, 0)
+
+    elseif selectedLocation == "Workbench" then
+        local part =
+            Workspace:FindFirstChild("Map")
+            and Workspace.Map:FindFirstChild("Campground")
+            and Workspace.Map.Campground:FindFirstChild("Scrapper")
+            and Workspace.Map.Campground.Scrapper:FindFirstChild("Movers")
+            and Workspace.Map.Campground.Scrapper.Movers:FindFirstChild("Right")
+            and Workspace.Map.Campground.Scrapper.Movers.Right:FindFirstChild("GrindersRight")
+
+        return part and part.CFrame
+
+    elseif selectedLocation == "Fire" then
+        local fire =
+            Workspace:FindFirstChild("Map")
+            and Workspace.Map:FindFirstChild("Campground")
+            and Workspace.Map.Campground:FindFirstChild("MainFire")
+            and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
+
+        return fire and fire.CFrame
+    end
+
+    return nil
+end
+
+local function getBringDropCFrame(baseCF, index)
+    local radius = 2
+    local height = BringHeight
+    local angle = (index - 1) * (math.pi / 6)
+
+    local offset = Vector3.new(
+        math.cos(angle) * radius,
+        height,
+        math.sin(angle) * radius
+    )
+
+    return baseCF * CFrame.new(offset)
+end
+
+function bringItems(fullList, selectedList, location)
+    if scriptDisabled then return end
+    if not ItemsFolder then
+        notifyUI("Bring Items", "Items folder belum siap.", 4, "alert-triangle")
+        return
+    end
+
+    selectedLocation = location or selectedLocation
+
+    local baseCF = resolveBringTargetCFrame()
+    if not baseCF then
+        notifyUI("Bring Items", "Target lokasi tidak ditemukan.", 4, "alert-triangle")
+        return
+    end
+
+    -- Build target set
+    local targetSet = {}
+    if table.find(selectedList, "All") then
+        for _, name in ipairs(fullList) do
+            if name ~= "All" then
+                targetSet[name] = true
+            end
+        end
+    else
+        for _, name in ipairs(selectedList) do
+            targetSet[name] = true
+        end
+    end
+
+    -- Collect candidates
+    local candidates = {}
+    for _, item in ipairs(ItemsFolder:GetChildren()) do
+        if item:IsA("Model")
+            and item.PrimaryPart
+            and targetSet[item.Name]
+        then
+            table.insert(candidates, item)
+        end
+    end
+
+    if #candidates == 0 then
+        notifyUI("Bring Items", "Tidak ada item yang cocok.", 3, "info")
+        return
+    end
+
+    notifyUI("Bring Items", "Memindahkan "..#candidates.." item...", 3, "package")
+
+    for i, item in ipairs(candidates) do
+        if not item or not item.Parent or not item.PrimaryPart then continue end
+
+        local dropCF = getBringDropCFrame(baseCF, i)
+
+        pcall(function()
+            if RequestStartDragging then
+                RequestStartDragging:FireServer(item)
+            end
+        end)
+
+        task.wait(0.03)
+
+        pcall(function()
+            item:PivotTo(dropCF)
+        end)
+
+        task.wait(0.03)
+
+        pcall(function()
+            if RequestStopDragging then
+                RequestStopDragging:FireServer(item)
+            end
+        end)
+
+        task.wait(0.03)
+    end
+
+    notifyUI("Bring Items", "Selesai membawa item.", 3, "check-circle-2")
+end
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
