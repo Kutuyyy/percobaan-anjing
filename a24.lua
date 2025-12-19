@@ -408,11 +408,13 @@ end
 ---------------------------------------------------------
 -- BRING ITEMS FUNCTION (Scrapper-style logic)
 ---------------------------------------------------------
-local selectedLocation=nil
-local BringHeight=nil
+local selectedLocation="Player"
+local BringHeight=20
+
 local function resolveBringTargetCFrame()
     if selectedLocation == "Player" then
         local char = LocalPlayer.Character
+        if not char then return nil end
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then return nil end
         return hrp.CFrame * CFrame.new(0, BringHeight, 0)
@@ -456,6 +458,7 @@ local function getBringDropCFrame(baseCF, index)
 end
 
 function bringItems(fullList, selectedList, location)
+    BringHeight = BringHeight or 20
     if scriptDisabled then return end
     if not ItemsFolder then
         notifyUI("Bring Items", "Items folder belum siap.", 4, "alert-triangle")
