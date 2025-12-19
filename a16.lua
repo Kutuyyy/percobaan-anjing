@@ -1,3 +1,4 @@
+ini script saya :
 -- Papi Dimz |HUB (All-in-One: Local Player + XENO GLASS Fishing + Original Features)
 -- Versi: Fully Integrated UI
 -- WARNING: Use at your own risk.
@@ -28,7 +29,17 @@ end)
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
-
+local function findWithTimeout(parent, name, timeout, pollInterval)
+    timeout = timeout or 6
+    pollInterval = pollInterval or 0.25
+    local t0 = tick()
+    while tick() - t0 < timeout do
+        local v = parent:FindFirstChild(name)
+        if v then return v end
+        task.wait(pollInterval)
+    end
+    return nil
+end
 local function backgroundFind(parent, name, callback, pollInterval)
     pollInterval = pollInterval or 0.5
     task.spawn(function()
@@ -42,19 +53,6 @@ local function backgroundFind(parent, name, callback, pollInterval)
         end
     end)
 end
-
-local function findWithTimeout(parent, name, timeout, pollInterval)
-    timeout = timeout or 6
-    pollInterval = pollInterval or 0.25
-    local t0 = tick()
-    while tick() - t0 < timeout do
-        local v = parent:FindFirstChild(name)
-        if v then return v end
-        task.wait(pollInterval)
-    end
-    return nil
-end
-
 ---------------------------------------------------------
 -- LOAD WINDUI
 ---------------------------------------------------------
@@ -64,7 +62,7 @@ local function createFallbackNotify(msg)
 end
 do
     local ok, res = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+        return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
     end)
     if ok and res then
         WindUI = res
@@ -180,30 +178,13 @@ local Window
 local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, healthTab
 local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
 
+-- Bring Item State
+local BringHeight = 20
+local selectedLocation = "Player"
+
 local scriptStartTime = os.clock()
 local currentFPS = 0
 local auraHeartbeatConnection = nil
-
-local selectedLocation = "Player"  -- Default location
-local BringHeight = 20  -- Default height from UI input
-local selCultist = {"All"}
-local selMeteor = {"All"}
-local selFuel = {"All"}
-local selFood = {"All"}
-local selHeal = {"All"}
-local selGear = {"All"}
-local selGun = {"All"}
-local selOther = {"All"}
-
--- Helper to get drop CFrame for bring (similar to scrap)
-local function getBringDropCFrame(basePos, index, height, radius)
-    radius = radius or 1.5
-    height = height or BringHeight or 6
-    local angle = (index - 1) * (math.pi / 6)
-    local offsetX = math.cos(angle) * radius
-    local offsetZ = math.sin(angle) * radius
-    return CFrame.new(basePos + Vector3.new(offsetX, height, offsetZ))
-end
 ---------------------------------------------------------
 -- GENERIC HELPERS
 ---------------------------------------------------------
@@ -425,116 +406,6 @@ local function teleportToCFrame(cf)
     hrp.CFrame = safeCF
 end
 
--- Main bring function
-local function bringItems(fullList, selected, location)
-    if scriptDisabled then return end
-    
-    -- Extract item names excluding "All"
-    local itemNames = {}
-    for _, name in ipairs(fullList) do
-        if name ~= "All" then
-            table.insert(itemNames, name)
-        end
-    end
-    
-    -- Determine target items set
-    local targetSet = tableToSet(selected)  -- Use existing tableToSet helper
-    local targets = {}
-    if targetSet["All"] then
-        for _, name in ipairs(itemNames) do
-            targets[name] = true
-        end
-    else
-        for _, name in ipairs(selected) do
-            targets[name] = true
-        end
-    end
-    
-    if next(targets) == nil then
-        notifyUI("Bring", "No items selected.", 4, "alert-triangle")
-        return
-    end
-    
-    -- Determine target position based on location
-    local targetPos
-    local scanFolder = ItemsFolder
-    local isCultistCategory = targets["Cultist"] or targets["Crossbow Cultist"]
-    
-    if isCultistCategory then
-        scanFolder = Workspace:FindFirstChild("Characters")
-        if not scanFolder then
-            notifyUI("Bring", "Characters folder not found.", 4, "alert-triangle")
-            return
-        end
-    elseif not scanFolder then
-        notifyUI("Bring", "Items folder not found.", 4, "alert-triangle")
-        return
-    end
-    
-    if location == "Player" then
-        local hrp = getRoot()
-        if not hrp then
-            notifyUI("Bring", "Character not ready.", 4, "alert-triangle")
-            return
-        end
-        targetPos = hrp.Position
-    elseif location == "Workbench" then
-        if not ensureScrapperTarget() then
-            notifyUI("Bring", "Scrapper target not found.", 4, "alert-triangle")
-            return
-        end
-        targetPos = ScrapperTarget.Position
-    elseif location == "Fire" then
-        local fireZone = findWithTimeout(Workspace, "Map", 5) and Workspace.Map:FindFirstChild("Campground") and Workspace.Map.Campground:FindFirstChild("MainFire") and Workspace.Map.Campground.MainFire:FindFirstChild("OuterTouchZone")
-        if not fireZone then
-            notifyUI("Bring", "Camp Fire not found.", 4, "alert-triangle")
-            return
-        end
-        targetPos = fireZone.Position
-    else
-        notifyUI("Bring", "Invalid location.", 4, "alert-triangle")
-        return
-    end
-    
-    -- Collect batch
-    local batch = {}
-    for _, obj in ipairs(scanFolder:GetChildren()) do
-        if obj:IsA("Model") and obj.PrimaryPart and targets[obj.Name] then
-            local dist = (obj.PrimaryPart.Position - targetPos).Magnitude
-            table.insert(batch, { instance = obj, distance = dist })
-        end
-    end
-    
-    if #batch == 0 then
-        notifyUI("Bring", "No matching items found.", 4, "search-x")
-        return
-    end
-    
-    -- Sort by distance
-    table.sort(batch, function(a, b) return a.distance < b.distance end)
-    
-    -- Process each item safely
-    for i, entry in ipairs(batch) do
-        local item = entry.instance
-        if item and item.Parent then
-            local dropCF = getBringDropCFrame(targetPos, i, BringHeight)
-            pcall(function()
-                if RequestStartDragging then RequestStartDragging:FireServer(item) end
-            end)
-            task.wait(0.03)
-            pcall(function()
-                item:PivotTo(dropCF)
-            end)
-            task.wait(0.03)
-            pcall(function()
-                if RequestStopDragging then RequestStopDragging:FireServer(item) end
-            end)
-            task.wait(0.03)
-        end
-    end
-    
-    notifyUI("Bring", string.format("%d items brought to %s.", #batch, location), 4, "package")
-end
 
 ---------------------------------------------------------
 -- LOCAL PLAYER FUNCTIONS
@@ -1938,42 +1809,50 @@ local function createMainUI()
 
         local cultistSec = BringTab:Section({Title = "Bring Cultist", Icon = "skull", Collapsible = true})
         local cultistList = {"All", "Crossbow Cultist", "Cultist"}
+        local selCultist = {"All"}
         cultistSec:Dropdown({Title="Pilih Cultist", Values=cultistList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selCultist=o or {"All"} end})
         cultistSec:Button({Title="Bring Cultist", Callback=function() bringItems(cultistList, selCultist, selectedLocation) end})
 
         local meteorSec = BringTab:Section({Title = "Bring Meteor Items", Icon = "zap", Collapsible = true})
         local meteorList = {"All", "Raw Obsidiron Ore", "Gold Shard", "Meteor Shard", "Scalding Obsidiron Ingot"}
+        local selMeteor = {"All"}
         meteorSec:Dropdown({Title="Pilih Item", Values=meteorList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selMeteor=o or {"All"} end})
         meteorSec:Button({Title="Bring Meteor", Callback=function() bringItems(meteorList, selMeteor, selectedLocation) end})
 
         local fuelSec = BringTab:Section({Title = "Fuels", Icon = "flame", Collapsible = true})
         local fuelList = {"All", "Log", "Coal", "Chair", "Fuel Canister", "Oil Barrel"}
+        local selFuel = {"All"}
         fuelSec:Dropdown({Title="Pilih Fuel", Values=fuelList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFuel=o or {"All"} end})
         fuelSec:Button({Title="Bring Fuels", Callback=function() bringItems(fuelList, selFuel, selectedLocation) end})
         fuelSec:Button({Title="Bring Logs Only", Callback=function() bringItems(fuelList, {"Log"}, selectedLocation) end})
 
         local foodSec = BringTab:Section({Title = "Food", Icon = "drumstick", Collapsible = true})
         local foodList = {"All", "Sweet Potato", "Stuffing", "Turkey Leg", "Carrot", "Pumkin", "Mackerel", "Salmon", "Swordfish", "Berry", "Ribs", "Stew", "Steak Dinner", "Morsel", "Steak", "Corn", "Cooked Morsel", "Cooked Steak", "Chilli", "Apple", "Cake"}
+        local selFood = {"All"}
         foodSec:Dropdown({Title="Pilih Food", Values=foodList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selFood=o or {"All"} end})
         foodSec:Button({Title="Bring Food", Callback=function() bringItems(foodList, selFood, selectedLocation) end})
 
         local healSec = BringTab:Section({Title = "Healing", Icon = "heart", Collapsible = true})
         local healList = {"All", "Medkit", "Bandage"}
+        local selHeal = {"All"}
         healSec:Dropdown({Title="Pilih Healing", Values=healList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selHeal=o or {"All"} end})
         healSec:Button({Title="Bring Healing", Callback=function() bringItems(healList, selHeal, selectedLocation) end})
 
         local gearSec = BringTab:Section({Title = "Gears (Scrap)", Icon = "wrench", Collapsible = true})
         local gearList = {"All", "Bolt", "Tyre", "Sheet Metal", "Old Radio", "Broken Fan", "Broken Microwave", "Washing Machine", "Old Car Engine", "UFO Scrap", "UFO Component", "UFO Junk", "Cultist Gem", "Gem of the Forest"}
+        local selGear = {"All"}
         gearSec:Dropdown({Title="Pilih Gear", Values=gearList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGear=o or {"All"} end})
         gearSec:Button({Title="Bring Gears", Callback=function() bringItems(gearList, selGear, selectedLocation) end})
 
         local gunSec = BringTab:Section({Title = "Guns & Ammo", Icon = "swords", Collapsible = true})
         local gunList = {"All", "Infernal Sword", "Morningstar", "Crossbow", "Infernal Crossbow", "Laser Sword", "Raygun", "Ice Axe", "Ice Sword", "Chainsaw", "Strong Axe", "Axe Trim Kit", "Spear", "Good Axe", "Revolver", "Rifle", "Tactical Shotgun", "Revolver Ammo", "Rifle Ammo", "Alien Armour", "Frog Boots", "Leather Body", "Iron Body", "Thorn Body", "Riot Shield", "Armour Trim Kit", "Obsidiron Boots"}
+        local selGun = {"All"}
         gunSec:Dropdown({Title="Pilih Weapon", Values=gunList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selGun=o or {"All"} end})
         gunSec:Button({Title="Bring Guns & Ammo", Callback=function() bringItems(gunList, selGun, selectedLocation) end})
 
         local otherSec = BringTab:Section({Title = "Bring Other", Icon = "package", Collapsible = true})
         local otherList = {"All", "Purple Fur Tuft", "Halloween Candle", "Candy", "Frog Key", "Feather", "Wildfire", "Sacrifice Totem", "Old Rod", "Flower", "Coin Stack", "Infernal Sack", "Giant Sack", "Good Sack", "Seed Box", "Chainsaw", "Old Flashlight", "Strong Flashlight", "Bunny Foot", "Wolf Pelt", "Bear Pelt", "Mammoth Tusk", "Alpha Wolf Pelt", "Bear Corpse", "Meteor Shard", "Gold Shard", "Raw Obsidiron Ore", "Gem of the Forest", "Diamond", "Defense Blueprint"}
+        local selOther = {"All"}
         otherSec:Dropdown({Title="Pilih Item", Values=otherList, Value={"All"}, Multi=true, AllowNone=true, Callback=function(o) selOther=o or {"All"} end})
         otherSec:Button({Title="Bring Other", Callback=function() bringItems(otherList, selOther, selectedLocation) end})
         
