@@ -408,8 +408,8 @@ end
 ---------------------------------------------------------
 -- BRING ITEMS FUNCTION (Scrapper-style logic)
 ---------------------------------------------------------
-selectedLocation=nil
-BringHeight=nil
+local selectedLocation=nil
+local BringHeight=nil
 local function resolveBringTargetCFrame()
     if selectedLocation == "Player" then
         local char = LocalPlayer.Character
