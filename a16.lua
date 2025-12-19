@@ -1,4 +1,3 @@
-ini script saya :
 -- Papi Dimz |HUB (All-in-One: Local Player + XENO GLASS Fishing + Original Features)
 -- Versi: Fully Integrated UI
 -- WARNING: Use at your own risk.
