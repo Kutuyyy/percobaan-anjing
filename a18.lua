@@ -178,8 +178,8 @@ local mainTab, localTab, fishingTab, farmTab, utilTab, nightTab, webhookTab, hea
 local miniHudGui, miniHudFrame, miniUptimeLabel, miniLavaLabel, miniPingFps
 
 -- Bring Item State
-local BringHeight = 20
-local selectedLocation = "Player"
+--local BringHeight = 20
+--local selectedLocation = "Player"
 
 local scriptStartTime = os.clock()
 local currentFPS = 0
