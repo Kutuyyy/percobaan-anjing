@@ -24,7 +24,7 @@ task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
 end)
-print("1")
+
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
@@ -408,6 +408,8 @@ end
 ---------------------------------------------------------
 -- BRING ITEMS FUNCTION (Scrapper-style logic)
 ---------------------------------------------------------
+selectedLocation=nil
+BringHeight=nil
 local function resolveBringTargetCFrame()
     if selectedLocation == "Player" then
         local char = LocalPlayer.Character
