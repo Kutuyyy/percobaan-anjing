@@ -24,7 +24,7 @@ task.spawn(function()
     repeat task.wait() until Workspace.CurrentCamera
     Camera = Workspace.CurrentCamera
 end)
-
+print("1")
 ---------------------------------------------------------
 -- UTIL: NON-BLOCKING FIND HELPERS
 ---------------------------------------------------------
