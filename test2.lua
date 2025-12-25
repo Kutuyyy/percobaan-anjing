@@ -48,7 +48,8 @@ end
 ---------------------------------------------------------
 -- Variabel utama (akan diinisialisasi nanti)
 local Character, HumanoidRootPart, ItemsFolder, RemoteEvents, RequestStartDragging, RequestStopDragging
-local BringHeight, selectedLocation = 20, "Player"
+local BringHeight = 20
+local selectedLocation = "Player"
 
 -- Scrapper Cache untuk Bring Item system (TERPISAH dari Farm System)
 local ScrapperTarget_Bring = nil
@@ -98,29 +99,55 @@ task.spawn(waitForEssentialResources)
 ---------------------------------------------------------
 -- STATE (PAPI DIMZ HUB - ASLI)
 ---------------------------------------------------------
-local scriptDisabled, GodmodeEnabled, AntiAFKEnabled = false, false, true
-local humanoid, rootPart = nil, nil
+local scriptDisabled = false
+
+-- Main
+local GodmodeEnabled = false
+local AntiAFKEnabled = true
+
+-- Character refs
+local humanoid = nil
+local rootPart = nil
 
 -- Camera / movement
-local defaultFOV, fovEnabled, fovValue = Camera.FieldOfView, false, 60
-local walkEnabled, walkSpeedValue, defaultWalkSpeed = false, 30, 16
+local defaultFOV = Camera.FieldOfView
+local fovEnabled = false
+local fovValue = 60
+
+local walkEnabled = false
+local walkSpeedValue = 30
+local defaultWalkSpeed = 16
 
 -- ORIGINAL FLY STATE (ASLI TANPA DIUBAH)
-local flyEnabled, flySpeedValue, flyConn, noclipConn = false, 50, nil, nil
-local originalTransparency, idleTrack = {}, nil
+local flyEnabled = false
+local flySpeedValue = 50
+local flyConn = nil
+local noclipConn = nil
+local originalTransparency = {}
+local idleTrack = nil
 
 ---------------------------------------------------------
 -- STATE (FISHING SYSTEM - ASLI)
 ---------------------------------------------------------
 -- Fishing state (XENO GLASS)
-local fishingClickDelay, fishingAutoClickEnabled = 5.0, false
-local waitingForPosition, fishingSavedPosition = false, nil
-local fishingOverlayVisible, fishingOffsetX, fishingOffsetY = false, 0, 0
-local zoneEnabled, zoneDestroyed, zoneLastVisible = false, false, false
-local zoneSpamClicking, zoneSpamThread, zoneSpamInterval = false, nil, 0.04
-local autoRecastEnabled, lastTimingBarSeenAt = false, 0
-local wasTimingBarVisible, lastRecastAt = false, 0
-local RECAST_DELAY, MAX_RECENT_SECS = 2, 5
+local fishingClickDelay = 5.0
+local fishingAutoClickEnabled = false
+local waitingForPosition = false
+local fishingSavedPosition = nil
+local fishingOverlayVisible = false
+local fishingOffsetX, fishingOffsetY = 0, 0
+local zoneEnabled = false
+local zoneDestroyed = false
+local zoneLastVisible = false
+local zoneSpamClicking = false
+local zoneSpamThread = nil
+local zoneSpamInterval = 0.04
+local autoRecastEnabled = false
+local lastTimingBarSeenAt = 0
+local wasTimingBarVisible = false
+local lastRecastAt = 0
+local RECAST_DELAY = 2
+local MAX_RECENT_SECS = 5
 local fishingLoopThread = nil
 
 ---------------------------------------------------------
@@ -1691,7 +1718,7 @@ local WebhookTab = Window:Tab({ Title = "Webhook", Icon = "radio" })
 ---------------------------------------------------------
 -- MAIN TAB CONTENT
 ---------------------------------------------------------
-do
+;(function()
     mainTab:Paragraph({
         Title = "Papi Dimz HUB",
         Desc = "Godmode, AntiAFK, Auto Sacrifice Lava, Auto Farm, Aura, Webhook DayDisplay.\nHotkey PC: P untuk toggle UI.",
@@ -1798,11 +1825,11 @@ do
             warn("[PapiDimz] Script dimatikan")
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- LOCAL PLAYER TAB CONTENT (SAMA dengan contekan.lua)
 ---------------------------------------------------------
-do
+;(function()
     localTab:Paragraph({ Title = "Self", Desc = "Atur FOV kamera.", Color = "Grey" })
     localTab:Toggle({ Title = "FOV", Icon = "zoom-in", Default = false, Callback = function(state) fovEnabled = state; applyFOV() end })
     localTab:Slider({ Title = "FOV", Description = "40 - 120", Step = 1, Value = { Min = 40, Max = 120, Default = 60 }, Callback = function(v) fovValue = v; applyFOV() end })
@@ -1823,11 +1850,11 @@ do
     localTab:Button({ Title = "Remove Sky", Icon = "cloud-off", Callback = removeSky })
     localTab:Paragraph({ Title = "Misc", Desc = "Instant Open, Reset.", Color = "Grey" })
     localTab:Toggle({ Title = "Instant Open (ProximityPrompt)", Icon = "bolt", Default = false, Callback = function(state) if state then enableInstantOpen() else disableInstantOpen() end end })
-end
+end)()
 ---------------------------------------------------------
 -- FISHING TAB CONTENT (ASLI)
 ---------------------------------------------------------
-do
+;(function()
     FishingTab:Paragraph({
         Title = "Fishing & Macro",
         Desc = "Sistem fishing otomatis dengan 100% success rate (zona hijau), auto recast, dan auto clicker.",
@@ -1961,11 +1988,11 @@ do
             WindUI:Notify({Title="Fishing Clean", Content="Fishing features dibersihkan.", Duration=3})
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- FARM TAB CONTENT (TERORGANISIR)
 ---------------------------------------------------------
-do
+;(function()
     -- Paragraph Combat Aura
     FarmTab:Paragraph({
         Title = "Combat Aura",
@@ -2190,11 +2217,11 @@ do
             end
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- NIGHT TAB CONTENT
 ---------------------------------------------------------
-do
+;(function()
     NightTab:Toggle({
         Title = "Auto Skip Malam (Temporal)",
         Icon = "moon-star",
@@ -2224,11 +2251,11 @@ do
             })
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- BRING SETTINGS (ORIGINAL - TIDAK DIUBAH)
 ---------------------------------------------------------
-do
+;(function()
     local setSec = BringTab:Section({Title="Bring Setting", Icon="settings", DefaultOpen=true})
     setSec:Dropdown({
         Title="Location",
@@ -2337,12 +2364,12 @@ do
         sec:Dropdown({Title="Pilih Item",Values=list,Value={"All"},Multi=true,AllowNone=true,Callback=function(v)sel=v or{"All"}end})
         sec:Button({Title="Bring Other",Callback=function()bringItems(list,sel,selectedLocation)end})
     end
-end
+end)()
 ---------------------------------------------------------
 -- TELEPORT TAB CONTENT
 ---------------------------------------------------------
 -- LOST CHILD
-do
+;(function()
     local lostChildSec = TeleportTab:Section({
         Title = "Teleport Lost Child",
         Icon = "baby",
@@ -2384,11 +2411,11 @@ do
             teleportToCFrame(hrp and hrp.CFrame)
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- STRUCTURE TELEPORT
 ---------------------------------------------------------
-do
+;(function()
     local structureSec = TeleportTab:Section({
         Title = "Structure Teleport",
         Icon = "castle",
@@ -2487,11 +2514,11 @@ do
             teleportToCFrame(anvil and anvil.CFrame)
         end
     })
-end
+end)()
 ---------------------------------------------------------
 -- UPDATE FOCUSED TAB
 ---------------------------------------------------------
-do
+;(function()
     local christmasSec = UpdateTab:Section({Title="Christmas",Icon="gift",DefaultOpen=true})
 
     christmasSec:Button({
@@ -2559,7 +2586,7 @@ do
             teleportToCFrame(target and target.CFrame)
         end
     })
-end
+end)()
 
 -- Inisialisasi karakter untuk semua sistem
 LocalPlayer.CharacterAdded:Connect(function(char)
@@ -2585,20 +2612,19 @@ end
 ---------------------------------------------------------
 -- WEBHOOK TAB CONTENT (SAMA dengan contekan.lua)
 ---------------------------------------------------------
-do
-    WebhookTab:Input({ Title = "Discord Webhook URL", Icon = "link", Placeholder = WebhookURL, Numeric = false, Finished = false, Callback = function(txt) local t = trim(txt or "") if t ~= "" then WebhookURL = t; WindUI:Notify({Title="Webhook", Content="URL disimpan.", Duration=3, Icon="link"}); print("WebhookURL set:", WebhookURL) end end })
-    WebhookTab:Input({ Title = "Webhook Username (opsional)", Icon = "user", Placeholder = WebhookUsername, Numeric = false, Finished = false, Callback = function(txt) local t = trim(txt or "") if t ~= "" then WebhookUsername = t end; WindUI:Notify({Title="Webhook", Content="Username disimpan: " .. tostring(WebhookUsername), Duration=3, Icon="user"}) end })
-    WebhookTab:Toggle({ Title = "Enable Webhook DayDisplay", Icon = "radio", Default = WebhookEnabled, Callback = function(state) WebhookEnabled = state; WindUI:Notify({Title="Webhook", Content=state and "Webhook diaktifkan." or "Webhook dimatikan.", Duration=3, Icon=state and "check-circle-2" or "x-circle"}) end })
-    WebhookTab:Button({ Title = "Test Send Webhook", Icon = "flask-conical", Callback = function()
-        if scriptDisabled then return end
-        local players = Players:GetPlayers(); local names = {}
-        for _, p in ipairs(players) do table.insert(names, p.Name) end
-        local payload = { username = WebhookUsername, embeds = {{ title = "🧪 TEST - Webhook Aktif " .. tostring(WebhookUsername), description = ("**Webhook Aktif %s**\n\n**Progress:** `%s`\n\n**Pemain Aktif:**\n%s"):format(tostring(WebhookUsername), tostring(currentDayCached), namesToVerticalList(names)), color = 0x2ECC71, footer = { text = "Test sent: " .. os.date("%Y-%m-%d %H:%M:%S") }}}}
-        local ok, msg = sendWebhookPayload(payload)
-        if ok then WindUI:Notify({Title="Webhook Test", Content="Terkirim: " .. tostring(msg), Duration=5, Icon="check-circle-2"}); print("Webhook Test success:", msg)
-        else WindUI:Notify({Title="Webhook Test Failed", Content=tostring(msg), Duration=8, Icon="alert-triangle"}); warn("Webhook Test failed:", msg) end
-    end})
-end
+WebhookTab:Input({ Title = "Discord Webhook URL", Icon = "link", Placeholder = WebhookURL, Numeric = false, Finished = false, Callback = function(txt) local t = trim(txt or "") if t ~= "" then WebhookURL = t; WindUI:Notify({Title="Webhook", Content="URL disimpan.", Duration=3, Icon="link"}); print("WebhookURL set:", WebhookURL) end end })
+WebhookTab:Input({ Title = "Webhook Username (opsional)", Icon = "user", Placeholder = WebhookUsername, Numeric = false, Finished = false, Callback = function(txt) local t = trim(txt or "") if t ~= "" then WebhookUsername = t end; WindUI:Notify({Title="Webhook", Content="Username disimpan: " .. tostring(WebhookUsername), Duration=3, Icon="user"}) end })
+WebhookTab:Toggle({ Title = "Enable Webhook DayDisplay", Icon = "radio", Default = WebhookEnabled, Callback = function(state) WebhookEnabled = state; WindUI:Notify({Title="Webhook", Content=state and "Webhook diaktifkan." or "Webhook dimatikan.", Duration=3, Icon=state and "check-circle-2" or "x-circle"}) end })
+WebhookTab:Button({ Title = "Test Send Webhook", Icon = "flask-conical", Callback = function()
+    if scriptDisabled then return end
+    local players = Players:GetPlayers(); local names = {}
+    for _, p in ipairs(players) do table.insert(names, p.Name) end
+    local payload = { username = WebhookUsername, embeds = {{ title = "🧪 TEST - Webhook Aktif " .. tostring(WebhookUsername), description = ("**Webhook Aktif %s**\n\n**Progress:** `%s`\n\n**Pemain Aktif:**\n%s"):format(tostring(WebhookUsername), tostring(currentDayCached), namesToVerticalList(names)), color = 0x2ECC71, footer = { text = "Test sent: " .. os.date("%Y-%m-%d %H:%M:%S") }}}}
+    local ok, msg = sendWebhookPayload(payload)
+    if ok then WindUI:Notify({Title="Webhook Test", Content="Terkirim: " .. tostring(msg), Duration=5, Icon="check-circle-2"}); print("Webhook Test success:", msg)
+    else WindUI:Notify({Title="Webhook Test Failed", Content=tostring(msg), Duration=8, Icon="alert-triangle"}); warn("Webhook Test failed:", msg) end
+end})
+
 ---------------------------------------------------------
 -- FINAL INITIALIZATION & ERROR SAFETY
 ---------------------------------------------------------
