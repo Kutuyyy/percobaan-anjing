@@ -293,9 +293,6 @@ local function main()
     }
     local openedChests = {}
 
-    -- Untuk ground position
-    local groundPosition = Vector3.new(0, 6, 0)
-
     ---------------------------------------------------------
     -- UTILITY FUNCTIONS (from contekan.lua)
     ---------------------------------------------------------
@@ -1251,31 +1248,17 @@ local function main()
     ---------------------------------------------------------
     -- FRENESIS FUNCTIONS (99 Night Explorer)
     ---------------------------------------------------------
-    local function getFootPosition()
-        local root = getRoot()
-        if not root then return nil end
-        
-        local origin = Vector3.new(root.Position.X, root.Position.Y + 2, root.Position.Z)
-        local rayDir = Vector3.new(0, -20, 0)
-        local rp = RaycastParams.new()
-        rp.FilterDescendantsInstances = { LocalPlayer.Character or LocalPlayer }
-        rp.FilterType = Enum.RaycastFilterType.Blacklist
-        local res = workspace:Raycast(origin, rayDir, rp)
-        
-        if res and res.Position then
-            return res.Position + Vector3.new(0, 1, 0)
-        end
-        
-        return root.Position - Vector3.new(0, 3, 0)
-    end
-
-    -- Spiral Flight
+    -- GANTI fungsi startSpiralFlight() (baris 1266):
     local function startSpiralFlight()
         if spiralActive then return end
         spiralActive = true
 
-        local root = getRoot()
-        if not root then return end
+        local char = getCharacter()
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then 
+            spiralActive = false
+            return 
+        end
 
         spiralThread = task.spawn(function()
             local startTime = tick()
@@ -1310,13 +1293,15 @@ local function main()
         end)
     end
 
+    -- GANTI fungsi stopSpiralFlight() (baris 1300):
     local function stopSpiralFlight()
         spiralActive = false
         if spiralThread then
             task.cancel(spiralThread)
             spiralThread = nil
         end
-        local root = getRoot()
+        local char = getCharacter()
+        local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
             root.CFrame = CFrame.new(groundPosition)
         end
@@ -3147,14 +3132,14 @@ local function main()
             Title = "📍 Teleport to Ground",
             Description = "Teleport ke posisi ground",
             Callback = function()
-                local r = getRoot()
-                if r then 
-                    r.CFrame = CFrame.new(groundPosition)
+                local char = getCharacter()
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then 
+                    root.CFrame = CFrame.new(groundPosition)
                     notifyUI("Teleport", "Ke ground position", 2, "navigation")
                 end
             end
         })
-        
         -- SECTION 2: OVERLAY SYSTEM
         FunTab:Section({ Title = "📐 Overlay System" })
         
