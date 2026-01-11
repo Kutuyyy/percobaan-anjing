@@ -243,6 +243,59 @@ local function main()
     local ToolDamageRemote = nil
     local EquipHandleRemote = nil
 
+    -- STATE (FRENESIS - 99 Night Explorer)
+    local spiralActive = false
+    local spiralThread
+    local spiralCenter = Vector3.new(0, 50, 0)
+    local flySpeed = 300
+
+    local overlayVisible = false
+    local overlayParts = {}
+    local overlayRadius = 100
+    local overlayHeight = 3
+    local overlayCenter = Vector3.new(1, overlayHeight, 1)
+    local overlayPoints = 50
+    local overlayShape = "circle"
+    local overlayShapes = {"circle", "square", "triangle", "star", "hexagon", "spiral", "diamond"}
+
+    local plantingActive = false
+    local plantingThread
+    local plantingMode = "character"
+    local plantInterval = 0.5
+    local infiniteSaplingEnabled = false
+    local plantSequenceIndex = 1
+    local totalPlanted = 0
+    local maxPlantPoints = 0
+    local plantingCompleted = false
+
+    local logWallActive = false
+    local logWallThread = nil
+    local placeStructureRemote = nil
+    local angleIncrement = 2
+    local radiusIncrement = 10
+
+    local INFINITE_SHOW_MARKER = true
+    local INFINITE_MARKER_LIFETIME = 3
+    local characterPlantHistory = {}
+
+    local isOpeningChests = false
+    local chestOpeningThread = nil
+    local chestOpeningSpeed = 0.3
+    local chestQueue = {}
+    local chestTypes = {
+        "Item Chest",
+        "Item Chest2", 
+        "Item Chest3",
+        "Item Chest4",
+        "Halloween Chest1",
+        "Halloween Maze Chest",
+        "ChristmasPresent1"
+    }
+    local openedChests = {}
+
+    -- Untuk ground position
+    local groundPosition = Vector3.new(0, 6, 0)
+
     ---------------------------------------------------------
     -- UTILITY FUNCTIONS (from contekan.lua)
     ---------------------------------------------------------
@@ -1194,6 +1247,424 @@ local function main()
         print("[Farm Remotes] Inisialisasi selesai.")
         return true
     end
+
+    ---------------------------------------------------------
+    -- FRENESIS FUNCTIONS (99 Night Explorer)
+    ---------------------------------------------------------
+
+    -- Fungsi untuk mendapatkan posisi ground
+    local function getRoot()
+        local c = LocalPlayer.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function getFootPosition()
+        local root = getRoot()
+        if not root then return nil end
+        
+        local origin = Vector3.new(root.Position.X, root.Position.Y + 2, root.Position.Z)
+        local rayDir = Vector3.new(0, -20, 0)
+        local rp = RaycastParams.new()
+        rp.FilterDescendantsInstances = { LocalPlayer.Character or LocalPlayer }
+        rp.FilterType = Enum.RaycastFilterType.Blacklist
+        local res = workspace:Raycast(origin, rayDir, rp)
+        
+        if res and res.Position then
+            return res.Position + Vector3.new(0, 1, 0)
+        end
+        
+        return root.Position - Vector3.new(0, 3, 0)
+    end
+
+    -- Spiral Flight
+    local function startSpiralFlight()
+        if spiralActive then return end
+        spiralActive = true
+
+        local root = getRoot()
+        if not root then return end
+
+        spiralThread = task.spawn(function()
+            local startTime = tick()
+            local duration = 60
+            local radius = 1000
+            local loops = 10
+
+            while spiralActive and tick() - startTime < duration do
+                local t = (tick() - startTime) / duration
+                local angle = t * math.pi * 2 * loops
+                local r = t * radius
+
+                local target = Vector3.new(
+                    spiralCenter.X + math.cos(angle) * r,
+                    spiralCenter.Y,
+                    spiralCenter.Z + math.sin(angle) * r
+                )
+
+                local dir = (target - root.Position)
+                if dir.Magnitude > flySpeed then
+                    dir = dir.Unit * flySpeed
+                end
+
+                root.CFrame = CFrame.new(root.Position + dir)
+                task.wait()
+            end
+
+            spiralActive = false
+            if root then
+                root.CFrame = CFrame.new(groundPosition)
+            end
+        end)
+    end
+
+    local function stopSpiralFlight()
+        spiralActive = false
+        if spiralThread then
+            task.cancel(spiralThread)
+            spiralThread = nil
+        end
+        local root = getRoot()
+        if root then
+            root.CFrame = CFrame.new(groundPosition)
+        end
+    end
+
+    -- Overlay System
+    local function clearOverlay()
+        for _, p in ipairs(overlayParts) do
+            if p.Parent then p:Destroy() end
+        end
+        overlayParts = {}
+    end
+
+    local function createOverlay()
+        clearOverlay()
+        
+        -- Hitung distribusi titik per layer
+        local layers = angleIncrement
+        local basePoints = math.floor(overlayPoints / layers)
+        local remainder = overlayPoints % layers
+        
+        for layer = 1, layers do
+            -- Hitung radius untuk layer ini
+            local layerRadius = overlayRadius + ((layer - 1) * radiusIncrement)
+            
+            -- Hitung jumlah titik di layer ini
+            local layerPoints = basePoints
+            if layer == layers then  -- Layer terakhir dapat sisa
+                layerPoints = layerPoints + remainder
+            end
+            
+            -- Warna berbeda per layer
+            local hue = (layer / layers) * 0.7  -- 0-0.7 untuk warna pelangi
+            local layerColor = Color3.fromHSV(hue, 0.8, 1)
+            
+            if overlayShape == "circle" then
+                -- Lingkaran konsentris
+                for i = 1, layerPoints do
+                    local a = (i / layerPoints) * math.pi * 2
+                    local p = Instance.new("Part")
+                    p.Size = Vector3.new(1, 1, 1)
+                    p.Anchored = true
+                    p.CanCollide = false
+                    p.Material = Enum.Material.Neon
+                    p.Color = layerColor
+                    p.Transparency = 0.3
+                    p.Position = Vector3.new(
+                        overlayCenter.X + math.cos(a) * layerRadius,
+                        overlayCenter.Y,
+                        overlayCenter.Z + math.sin(a) * layerRadius
+                    )
+                    p.Parent = workspace
+                    table.insert(overlayParts, p)
+                end
+                
+            elseif overlayShape == "square" then
+                -- Persegi konsentris
+                local pointsPerSide = math.max(1, math.floor(layerPoints / 4))
+                local halfSize = layerRadius
+                
+                for side = 1, 4 do
+                    for i = 1, pointsPerSide do
+                        local t = (i - 1) / math.max(1, pointsPerSide - 1)
+                        local x, z = 0, 0
+                        
+                        if side == 1 then -- Top
+                            x = -halfSize + (t * 2 * halfSize)
+                            z = halfSize
+                        elseif side == 2 then -- Right
+                            x = halfSize
+                            z = halfSize - (t * 2 * halfSize)
+                        elseif side == 3 then -- Bottom
+                            x = halfSize - (t * 2 * halfSize)
+                            z = -halfSize
+                        elseif side == 4 then -- Left
+                            x = -halfSize
+                            z = -halfSize + (t * 2 * halfSize)
+                        end
+                        
+                        local p = Instance.new("Part")
+                        p.Size = Vector3.new(1, 1, 1)
+                        p.Anchored = true
+                        p.CanCollide = false
+                        p.Material = Enum.Material.Neon
+                        p.Color = layerColor
+                        p.Transparency = 0.3
+                        p.Position = Vector3.new(
+                            overlayCenter.X + x,
+                            overlayCenter.Y,
+                            overlayCenter.Z + z
+                        )
+                        p.Parent = workspace
+                        table.insert(overlayParts, p)
+                    end
+                end
+                
+            elseif overlayShape == "triangle" then
+                -- Segitiga konsentris
+                local trianglePoints = 3
+                local pointsPerSide = math.max(1, math.floor(layerPoints / trianglePoints))
+                
+                local vertices = {
+                    Vector3.new(0, 0, layerRadius),
+                    Vector3.new(layerRadius * 0.866, 0, -layerRadius * 0.5),
+                    Vector3.new(-layerRadius * 0.866, 0, -layerRadius * 0.5)
+                }
+                
+                for side = 1, trianglePoints do
+                    for i = 1, pointsPerSide do
+                        local t = (i - 1) / math.max(1, pointsPerSide - 1)
+                        local startPoint = vertices[side]
+                        local endPoint = vertices[(side % trianglePoints) + 1]
+                        
+                        local x = startPoint.X + (endPoint.X - startPoint.X) * t
+                        local z = startPoint.Z + (endPoint.Z - startPoint.Z) * t
+                        
+                        local p = Instance.new("Part")
+                        p.Size = Vector3.new(1, 1, 1)
+                        p.Anchored = true
+                        p.CanCollide = false
+                        p.Material = Enum.Material.Neon
+                        p.Color = layerColor
+                        p.Transparency = 0.3
+                        p.Position = Vector3.new(
+                            overlayCenter.X + x,
+                            overlayCenter.Y,
+                            overlayCenter.Z + z
+                        )
+                        p.Parent = workspace
+                        table.insert(overlayParts, p)
+                    end
+                end
+                
+            elseif overlayShape == "star" then
+                -- Bintang konsentris
+                for i = 1, layerPoints do
+                    local angle = (i / layerPoints) * math.pi * 2
+                    local innerRadius = layerRadius * 0.4
+                    local outerRadius = layerRadius
+                    
+                    local r = i % 2 == 0 and innerRadius or outerRadius
+                    local starAngle = angle * 5 / 2
+                    
+                    local x = math.cos(starAngle) * r
+                    local z = math.sin(starAngle) * r
+                    
+                    local p = Instance.new("Part")
+                    p.Size = Vector3.new(1, 1, 1)
+                    p.Anchored = true
+                    p.CanCollide = false
+                    p.Material = Enum.Material.Neon
+                    p.Color = layerColor
+                    p.Transparency = 0.3
+                    p.Position = Vector3.new(
+                        overlayCenter.X + x,
+                        overlayCenter.Y,
+                        overlayCenter.Z + z
+                    )
+                    p.Parent = workspace
+                    table.insert(overlayParts, p)
+                end
+                
+            elseif overlayShape == "hexagon" then
+                -- Hexagon konsentris
+                local sides = 6
+                local pointsPerSide = math.max(1, math.floor(layerPoints / sides))
+                
+                for side = 0, sides - 1 do
+                    for i = 1, pointsPerSide do
+                        local t = (i - 1) / math.max(1, pointsPerSide - 1)
+                        local angle1 = (side / sides) * math.pi * 2
+                        local angle2 = ((side + 1) / sides) * math.pi * 2
+                        
+                        local x1 = math.cos(angle1) * layerRadius
+                        local z1 = math.sin(angle1) * layerRadius
+                        local x2 = math.cos(angle2) * layerRadius
+                        local z2 = math.sin(angle2) * layerRadius
+                        
+                        local x = x1 + (x2 - x1) * t
+                        local z = z1 + (z2 - z1) * t
+                        
+                        local p = Instance.new("Part")
+                        p.Size = Vector3.new(1, 1, 1)
+                        p.Anchored = true
+                        p.CanCollide = false
+                        p.Material = Enum.Material.Neon
+                        p.Color = layerColor
+                        p.Transparency = 0.3
+                        p.Position = Vector3.new(
+                            overlayCenter.X + x,
+                            overlayCenter.Y,
+                            overlayCenter.Z + z
+                        )
+                        p.Parent = workspace
+                        table.insert(overlayParts, p)
+                    end
+                end
+                
+            elseif overlayShape == "spiral" then
+                -- Spiral konsentris (setiap layer adalah spiral sendiri)
+                for i = 1, layerPoints do
+                    local t = i / layerPoints
+                    local angle = t * math.pi * 8
+                    local r = t * layerRadius  -- Spiral dalam layer ini
+                    
+                    local x = math.cos(angle) * r
+                    local z = math.sin(angle) * r
+                    
+                    local p = Instance.new("Part")
+                    p.Size = Vector3.new(1, 1, 1)
+                    p.Anchored = true
+                    p.CanCollide = false
+                    p.Material = Enum.Material.Neon
+                    p.Color = layerColor
+                    p.Transparency = 0.3
+                    p.Position = Vector3.new(
+                        overlayCenter.X + x,
+                        overlayCenter.Y,
+                        overlayCenter.Z + z
+                    )
+                    p.Parent = workspace
+                    table.insert(overlayParts, p)
+                end
+                
+            elseif overlayShape == "diamond" then
+                -- Diamond konsentris
+                local vertices = {
+                    Vector3.new(0, 0, layerRadius),
+                    Vector3.new(layerRadius, 0, 0),
+                    Vector3.new(0, 0, -layerRadius),
+                    Vector3.new(-layerRadius, 0, 0)
+                }
+                
+                local pointsPerSide = math.max(1, math.floor(layerPoints / 4))
+                
+                for side = 1, 4 do
+                    for i = 1, pointsPerSide do
+                        local t = (i - 1) / math.max(1, pointsPerSide - 1)
+                        local startPoint = vertices[side]
+                        local endPoint = vertices[(side % 4) + 1]
+                        
+                        local x = startPoint.X + (endPoint.X - startPoint.X) * t
+                        local z = startPoint.Z + (endPoint.Z - startPoint.Z) * t
+                        
+                        local p = Instance.new("Part")
+                        p.Size = Vector3.new(1, 1, 1)
+                        p.Anchored = true
+                        p.CanCollide = false
+                        p.Material = Enum.Material.Neon
+                        p.Color = layerColor
+                        p.Transparency = 0.3
+                        p.Position = Vector3.new(
+                            overlayCenter.X + x,
+                            overlayCenter.Y,
+                            overlayCenter.Z + z
+                        )
+                        p.Parent = workspace
+                        table.insert(overlayParts, p)
+                    end
+                end
+            end
+        end
+    end
+
+    local function updateOverlay()
+        if overlayVisible then 
+            createOverlay()
+        else 
+            clearOverlay() 
+        end
+    end
+
+    -- Sapling System (sederhana)
+    local function findSaplingInstance()
+        local items = workspace:FindFirstChild("Items")
+        if items then
+            for _, v in ipairs(items:GetChildren()) do
+                if v.Name:lower():find("sapling") then
+                    return v
+                end
+            end
+        end
+        return "Sapling"
+    end
+
+    -- Auto Chest Opener (sederhana)
+    local function findAllChests()
+        local foundChests = {}
+        local itemsFolder = Workspace:FindFirstChild("Items")
+        
+        if itemsFolder then
+            for _, chestType in ipairs(chestTypes) do
+                for _, chest in ipairs(itemsFolder:GetChildren()) do
+                    if chest:IsA("Model") and chest.Name == chestType then
+                        table.insert(foundChests, chest)
+                    end
+                end
+            end
+        end
+        return foundChests
+    end
+
+    local function startAutoOpenChests()
+        if isOpeningChests then return end
+        
+        local chests = findAllChests()
+        if #chests == 0 then
+            notifyUI("Chest Opener", "Tidak ada chest ditemukan!", 3, "alert-triangle")
+            return
+        end
+        
+        isOpeningChests = true
+        notifyUI("Chest Opener", "Memulai membuka " .. #chests .. " chest...", 3, "info")
+        
+        chestOpeningThread = task.spawn(function()
+            for i, chest in ipairs(chests) do
+                if not isOpeningChests then break end
+                
+                pcall(function()
+                    if RequestOpenItemChest then
+                        RequestOpenItemChest:FireServer(chest)
+                        notifyUI("Chest Opener", "✓ " .. chest.Name .. " (" .. i .. "/" .. #chests .. ")", 1, "check-circle")
+                    end
+                end)
+                
+                task.wait(chestOpeningSpeed)
+            end
+            
+            isOpeningChests = false
+            notifyUI("Chest Opener", "Selesai membuka " .. #chests .. " chest!", 4, "success")
+        end)
+    end
+
+    local function stopAutoOpenChests()
+        isOpeningChests = false
+        if chestOpeningThread then
+            task.cancel(chestOpeningThread)
+            chestOpeningThread = nil
+        end
+        notifyUI("Chest Opener", "Dihentikan", 2, "info")
+    end
     ---------------------------------------------------------
     -- UTILITY FUNCTIONS (BRING ITEM - ASLI)
     ---------------------------------------------------------
@@ -1639,6 +2110,10 @@ local function main()
             return nil
         end
         
+    -- Tambahkan remote untuk FRENESIS
+    RequestOpenItemChest = RemoteEvents:FindFirstChild("RequestOpenItemChest")
+    placeStructureRemote = RemoteEvents:FindFirstChild("RequestPlaceStructure")
+
         -- Tunggu RemoteEvents muncul
         local re = safeWaitForChild(ReplicatedStorage, "RemoteEvents")
         if not re then
@@ -1860,7 +2335,9 @@ local function main()
         localTab:Button({ Title = "Remove Fog", Icon = "wind", Callback = removeFog })
         localTab:Button({ Title = "Remove Sky", Icon = "cloud-off", Callback = removeSky })
         localTab:Paragraph({ Title = "Misc", Desc = "Instant Open, Reset.", Color = "Grey" })
-        localTab:Toggle({ Title = "Instant Open (ProximityPrompt)", Icon = "bolt", Default = false, Callback = function(state) if state then enableInstantOpen() else disableInstantOpen() end end })
+        localTab:Toggle({ Title = "Instant Open", Icon = "bolt", Default = false, Callback = function(state) if state then enableInstantOpen() else disableInstantOpen() end end })
+        -- Tab 10: Fun (FRENESIS)
+        local FunTab = Window:Tab({ Title = "Fun", Icon = "gamepad-2" })
     end)()
     ---------------------------------------------------------
     -- FISHING TAB CONTENT (ASLI)
@@ -1868,7 +2345,7 @@ local function main()
     ;(function()
         FishingTab:Paragraph({
             Title = "Fishing & Macro",
-            Desc = "Sistem fishing otomatis dengan 100% success rate (zona hijau), auto recast, dan auto clicker.",
+            Desc = "An automated fishing system featuring a 100% success rate (green zone), automatic recasting, and an auto-clicker.",
             Color = "Grey"
         })
 
@@ -2007,7 +2484,7 @@ local function main()
         -- Paragraph Combat Aura
         FarmTab:Paragraph({
             Title = "Combat Aura",
-            Desc = "Kill Aura & Chop Aura untuk clear musuh dan tebang pohon otomatis.\nRadius bisa diatur dari 50 sampai 200.",
+            Desc = "Kill Aura & Chop Aura for automatically clearing enemies and chopping down trees.\nThe radius is adjustable from 50 to 200.",
             Color = "Grey"
         })
 
@@ -2117,7 +2594,7 @@ local function main()
 
         -- Auto Crockpot
         FarmTab:Toggle({
-            Title = "Auto Crockpot (Carrot + Corn)",
+            Title = "Auto Crockpot",
             Icon = "flame",
             Default = false,
             Callback = function(state)
@@ -2154,7 +2631,7 @@ local function main()
 
         -- Auto Scrapper (HANYA 1 KALI)
         FarmTab:Toggle({
-            Title = "Auto Scrapper → Grinder",
+            Title = "Auto Scrapper",
             Icon = "recycle",
             Default = false,
             Callback = function(state)
@@ -2646,6 +3123,169 @@ local function main()
         else WindUI:Notify({Title="Webhook Test Failed", Content=tostring(msg), Duration=8, Icon="alert-triangle"}); warn("Webhook Test failed:", msg) end
     end})
 
+    ;(function()
+        -- SECTION 1: REVEAL MAP
+        FunTab:Paragraph({
+            Title = "🌀 FRENESIS - 99 Night Explorer",
+            Desc = "Fitur eksplorasi dan penanaman otomatis",
+            Color = "Grey"
+        })
+        
+        FunTab:Section({ Title = "🔍 Reveal Map", DefaultOpen = true })
+        
+        FunTab:Button({
+            Title = "🌀 Start/Stop Spiral Flight",
+            Description = "Terbang dengan pola spiral untuk melihat map",
+            Callback = function()
+                if spiralActive then 
+                    stopSpiralFlight()
+                    notifyUI("Spiral Flight", "Dihentikan", 3, "pause")
+                else 
+                    startSpiralFlight()
+                    notifyUI("Spiral Flight", "Dimulai", 3, "play")
+                end
+            end
+        })
+        
+        FunTab:Button({
+            Title = "📍 Teleport to Ground",
+            Description = "Teleport ke posisi ground",
+            Callback = function()
+                local r = getRoot()
+                if r then 
+                    r.CFrame = CFrame.new(groundPosition)
+                    notifyUI("Teleport", "Ke ground position", 2, "navigation")
+                end
+            end
+        })
+        
+        -- SECTION 2: OVERLAY SYSTEM
+        FunTab:Section({ Title = "📐 Overlay System" })
+        
+        FunTab:Toggle({
+            Title = "Show Overlay",
+            Description = "Tampilkan overlay di workspace",
+            Default = false,
+            Callback = function(v)
+                overlayVisible = v
+                updateOverlay()
+                notifyUI("Overlay", v and "Aktif" or "Nonaktif", 2, v and "eye" or "eye-off")
+            end
+        })
+        
+        FunTab:Dropdown({
+            Title = "Select Shape",
+            Values = overlayShapes,
+            Default = "circle",
+            Callback = function(v)
+                overlayShape = v
+                if overlayVisible then updateOverlay() end
+                notifyUI("Overlay Shape", "Bentuk: " .. v, 2, "shapes")
+            end
+        })
+        
+        FunTab:Slider({
+            Title = "Overlay Points",
+            Description = "Jumlah titik overlay",
+            Step = 1,
+            Value = { Min = 10, Max = 500, Default = 50 },
+            Callback = function(v)
+                overlayPoints = math.floor(v)
+                if overlayVisible then updateOverlay() end
+            end
+        })
+        
+        FunTab:Slider({
+            Title = "Overlay Radius",
+            Description = "Radius overlay (studs)",
+            Step = 1,
+            Value = { Min = 10, Max = 200, Default = 100 },
+            Callback = function(v)
+                overlayRadius = math.floor(v)
+                if overlayVisible then updateOverlay() end
+            end
+        })
+        
+        -- SECTION 3: AUTO CHEST OPENER
+        FunTab:Section({ Title = "🎁 Auto Chest Opener" })
+        
+        FunTab:Toggle({
+            Title = "Auto Open All Chest",
+            Description = "ON: Scan dan buka semua chest otomatis",
+            Default = false,
+            Callback = function(v)
+                if v then
+                    startAutoOpenChests()
+                else
+                    stopAutoOpenChests()
+                end
+            end
+        })
+        
+        FunTab:Slider({
+            Title = "Chest Open Delay",
+            Description = "Delay antara membuka chest (detik)",
+            Step = 0.1,
+            Value = { Min = 0.1, Max = 1, Default = 0.3 },
+            Callback = function(v) 
+                chestOpeningSpeed = math.floor(v * 10) / 10
+            end
+        })
+        
+        FunTab:Button({
+            Title = "🔍 Scan Chest Sekarang",
+            Description = "Scan semua chest di map",
+            Callback = function()
+                local chests = findAllChests()
+                notifyUI("Chest Scanner", "Ditemukan " .. #chests .. " chest!", 3, "search")
+            end
+        })
+        
+        -- SECTION 4: LOG WALL SYSTEM
+        FunTab:Section({ Title = "🧱 Log Wall System" })
+        
+        FunTab:Button({
+            Title = "🔍 Scan Log Wall Blueprint",
+            Description = "Cari Log Wall Blueprint di inventory",
+            Callback = function()
+                -- Fungsi sederhana untuk mengecek blueprint
+                local inventory = LocalPlayer:FindFirstChild("Inventory")
+                local found = false
+                if inventory then
+                    for _, item in ipairs(inventory:GetChildren()) do
+                        if string.find(item.Name:lower(), "log") and string.find(item.Name:lower(), "wall") then
+                            found = true
+                            break
+                        end
+                    end
+                end
+                
+                if found then
+                    notifyUI("Log Wall", "Blueprint ditemukan di inventory!", 3, "check-circle")
+                else
+                    notifyUI("Log Wall", "Blueprint TIDAK ditemukan", 3, "alert-triangle")
+                end
+            end
+        })
+        
+        -- SECTION 5: INFO
+        FunTab:Section({ Title = "ℹ️ FRENESIS Info" })
+        
+        FunTab:Label({
+            Title = "🌀 FRENESIS - 99 Night Explorer",
+            Description = "v1.0 | Integrasi ke Papi Dimz HUB"
+        })
+        
+        FunTab:Label({
+            Title = "Fitur yang tersedia:",
+            Description = "• Spiral Flight untuk explore map\n• Overlay System dengan multiple shapes\n• Auto Chest Opener\n• Log Wall System (basic)"
+        })
+        
+        FunTab:Label({
+            Title = "Kontrol:",
+            Description = "• F1: Toggle UI Visibility (jika diaktifkan)\n• Gunakan slider untuk mengatur parameter"
+        })
+    end)()
     ---------------------------------------------------------
     -- FINAL INITIALIZATION & ERROR SAFETY
     ---------------------------------------------------------
@@ -2733,6 +3373,23 @@ local function main()
         end)
     end)
 
+    -- Inisialisasi overlay secara berkala
+    task.spawn(function()
+        while not scriptDisabled do
+            task.wait(1)
+            if overlayVisible then
+                updateOverlay()
+            end
+        end
+    end)
+
+    -- Input handler untuk F1 (toggle UI)
+    UserInputService.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.F1 and Window then
+            Window.Visible = not Window.Visible
+            notifyUI("UI", "Window " .. (Window.Visible and "ditampilkan" or "disembunyikan"), 2, "monitor")
+        end
+    end)
     ---------------------------------------------------------
     -- LOADED NOTIFICATION (FINAL)
     ---------------------------------------------------------
