@@ -199,6 +199,7 @@ local function main()
         ["Old Axe"] = "3_7367831688",
         ["Good Axe"] = "112_7367831688",
         ["Strong Axe"] = "116_7367831688",
+        ["Infernal Sword"] = "1_8838463626",
         Chainsaw = "647_8992824875",
         Spear = "196_8999010016"
     }
@@ -817,7 +818,7 @@ local function main()
     local nextAuraTick = 0
     local function GetBestAxe(forTree)
         for name, id in pairs(AxeIDs) do
-            if (not forTree) or (name ~= "Chainsaw" and name ~= "Spear") then
+            if (not forTree) or (name ~= "Infernal Sword" and name ~= "Spear" and name ~= "Chainsaw") then
                 local inv = LocalPlayer:FindFirstChild("Inventory")
                 if inv then
                     local tool = inv:FindFirstChild(name)
