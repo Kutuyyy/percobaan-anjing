@@ -1251,13 +1251,6 @@ local function main()
     ---------------------------------------------------------
     -- FRENESIS FUNCTIONS (99 Night Explorer)
     ---------------------------------------------------------
-
-    -- Fungsi untuk mendapatkan posisi ground
-    local function getRoot()
-        local c = LocalPlayer.Character
-        return c and c:FindFirstChild("HumanoidRootPart")
-    end
-
     local function getFootPosition()
         local root = getRoot()
         if not root then return nil end
@@ -2110,9 +2103,6 @@ local function main()
             return nil
         end
         
-    -- Tambahkan remote untuk FRENESIS
-    RequestOpenItemChest = RemoteEvents:FindFirstChild("RequestOpenItemChest")
-    placeStructureRemote = RemoteEvents:FindFirstChild("RequestPlaceStructure")
 
         -- Tunggu RemoteEvents muncul
         local re = safeWaitForChild(ReplicatedStorage, "RemoteEvents")
@@ -2139,6 +2129,10 @@ local function main()
         ToolDamageRemote = re:FindFirstChild("ToolDamageObject")
         EquipHandleRemote = re:FindFirstChild("EquipItemHandle")
         
+        -- Tambahkan remote untuk FRENESIS
+        RequestOpenItemChest = RemoteEvents:FindFirstChild("RequestOpenItemChest")
+        placeStructureRemote = RemoteEvents:FindFirstChild("RequestPlaceStructure")
+
         -- Debug print
         print(string.format(
             "[Remotes] Bring: %s/%s | GodMode: %s | Farm: %s/%s/%s/%s/%s",
@@ -2200,6 +2194,8 @@ local function main()
     local NightTab = Window:Tab({ Title = "Night", Icon = "moon" })
     -- Tab 9: Webhook
     local WebhookTab = Window:Tab({ Title = "Webhook", Icon = "radio" })
+    -- Tab 10: Fun (FRENESIS) -- TAMBAHKAN INI
+    local FunTab = Window:Tab({ Title = "Fun", Icon = "gamepad-2" })
 
     ---------------------------------------------------------
     -- MAIN TAB CONTENT
@@ -2336,8 +2332,7 @@ local function main()
         localTab:Button({ Title = "Remove Sky", Icon = "cloud-off", Callback = removeSky })
         localTab:Paragraph({ Title = "Misc", Desc = "Instant Open, Reset.", Color = "Grey" })
         localTab:Toggle({ Title = "Instant Open", Icon = "bolt", Default = false, Callback = function(state) if state then enableInstantOpen() else disableInstantOpen() end end })
-        -- Tab 10: Fun (FRENESIS)
-        local FunTab = Window:Tab({ Title = "Fun", Icon = "gamepad-2" })
+        
     end)()
     ---------------------------------------------------------
     -- FISHING TAB CONTENT (ASLI)
@@ -3123,6 +3118,7 @@ local function main()
         else WindUI:Notify({Title="Webhook Test Failed", Content=tostring(msg), Duration=8, Icon="alert-triangle"}); warn("Webhook Test failed:", msg) end
     end})
 
+    -- Tab 10: Fun (FRENESIS)
     ;(function()
         -- SECTION 1: REVEAL MAP
         FunTab:Paragraph({
@@ -3248,7 +3244,6 @@ local function main()
             Title = "🔍 Scan Log Wall Blueprint",
             Description = "Cari Log Wall Blueprint di inventory",
             Callback = function()
-                -- Fungsi sederhana untuk mengecek blueprint
                 local inventory = LocalPlayer:FindFirstChild("Inventory")
                 local found = false
                 if inventory then
@@ -3286,6 +3281,7 @@ local function main()
             Description = "• F1: Toggle UI Visibility (jika diaktifkan)\n• Gunakan slider untuk mengatur parameter"
         })
     end)()
+    
     ---------------------------------------------------------
     -- FINAL INITIALIZATION & ERROR SAFETY
     ---------------------------------------------------------
@@ -3410,6 +3406,7 @@ local function main()
     - Farm System: READY
     - Combat Aura: READY
     - Webhook: READY
+    - FRENESIS Fun: READY
     ===========================
     ]])
 
@@ -3418,7 +3415,7 @@ local function main()
     ---------------------------------------------------------
     WindUI:Notify({
         Title = "Papi Dimz Ultimate Hub Loaded!",
-        Content = "All Features: Main + Local Player + Bring Item + Teleport + Update Focused + Fishing + Farm + Night Skip + Webhook",
+        Content = "All Features: Main + Local Player + Bring Item + Teleport + Update Focused + Fishing + Farm + Night Skip + Webhook + FRENESIS Fun",
         Icon = "sparkles",
         Duration = 10
     })
