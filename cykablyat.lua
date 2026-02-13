@@ -2,6 +2,38 @@
 -- FRENESIS x HexaCore HUB (FINAL COMPLETE + AUTO RUN)
 -- Reworked: semua variabel stateful dimasukkan ke `local state = {}` untuk mengurangi usage local registers
 -- Struktur dirapikan: helpers / listeners / loops / platform builder / UI tetap sama alurnya
+local DEBUG = true   -- true = console aktif | false = silent
+
+do
+    local _print = print
+    local _warn  = warn
+
+    local noop = function(...) end
+
+    if not DEBUG then
+        print = noop
+        warn  = noop
+
+        -- executor console
+        rconsoleprint = noop
+        rconsolewarn  = noop
+        rconsoleerr   = noop
+    end
+end
+
+------------------------------------------------------
+-- HEXACORE INTRO (RGB PULSE, TRANSPARENT BG, NO HEX)
+------------------------------------------------------
+local ok, Intro = pcall(function()
+    return loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/Kutuyyy/obfuscate/refs/heads/main/intro.lua"
+    ))()
+end)
+
+if ok and type(Intro) == "table" and Intro.Play then
+    Intro:Play()
+end
+------------------------------------------------------
 
 ------------------------------------------------------
 -- STATE ROOT (semua variable ditempatkan di sini)
@@ -19,6 +51,27 @@ end)
 if not ok or type(WindUI) ~= "table" then return end
 state.WindUI = WindUI
 
+-- UI ELEMENT REFERENCES (untuk sinkronisasi setelah load)
+state.UI_ELEMENTS = {}
+
+local function safeSetUIElement(el, value)
+    if not el then return end
+    pcall(function()
+        if el.SetValue then el:SetValue(value) return end
+        if el.Set then el:Set(value) return end
+        if el.SetEnabled then el:SetEnabled(value) return end
+        if el.SetState then el:SetState(value) return end
+        -- fallback: try direct property (rare)
+        if el.Value ~= nil then el.Value = value end
+    end)
+end
+
+-- wrapper untuk membuat Toggle dan menyimpan reference
+local function createToggle(tab, params, key)
+    local el = tab:Toggle(params)
+    if key and el then state.UI_ELEMENTS[key] = el end
+    return el
+end
 ------------------------------------------------------
 -- SERVICES (local karena sering dipakai)
 ------------------------------------------------------
@@ -29,6 +82,437 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService") -- needed for platform builder tweens
+local HttpService = game:GetService("HttpService")
+local userId = tostring(Players.LocalPlayer.UserId)
+
+--Config save/load
+local FIREBASE_URL = "https://hexacore-5455a-default-rtdb.asia-southeast1.firebasedatabase.app"
+local GAME_NAME = "Escape Tsunami For Brainrot"
+
+local function urlEncode(s)
+    if not s then return "" end
+    -- very small url-encoder for spaces (good enough for folder name)
+    return tostring(s):gsub(" ", "%%20")
+end
+
+-- ===== CLOUD CONFIG HELPERS (SAFE + COMPAT) =====
+local function isTablePlain(t)
+    if type(t) ~= "table" then return false end
+    for k,v in pairs(t) do
+        if type(k) ~= "string" and type(k) ~= "number" then return false end
+        local tt = type(v)
+        if not (tt == "string" or tt == "number" or tt == "boolean" or tt == "table" or tt == "nil") then
+            return false
+        end
+    end
+    return true
+end
+
+local function vec3ToTable(v)
+    if typeof and typeof(v) == "Vector3" then
+        return { x = v.X, y = v.Y, z = v.Z }
+    end
+    return nil
+end
+
+local function tableToVec3(t)
+    if type(t) == "table" and t.x and t.y and t.z then
+        return Vector3.new(t.x, t.y, t.z)
+    end
+    return nil
+end
+
+-- whitelist keys yang boleh disimpan (only primitive / small tables)
+local SAVABLE_KEYS = {
+    "AutoCollect","AutoUpgrade","AutoBuySpeed","AutoRebirth","AutoBuyCarry",
+    "AutoCollectRadioactive","AutoCollectUFO","AutoCollectGoldBar",
+    "AutoCollectTicket","AutoCollectGamer",
+    "AutoSpinRadioactive","AutoSpinUFO","AutoSpinGoldBar",
+    "AutoCollectTarget","AutoRunEnabled",
+    "InstantGrabEnabled","InfiniteJumpEnabled","InfiniteZoomEnabled",
+    "platformEnabled","AUTO_MOVE_SPEED_MULT","BRAINROT_PICK_COUNT",
+    "selectedRarities","LuckyBlockTargets","TWEEN_SPEED","WALL_SAFE_DISTANCE",
+    "MAX_SLOTS","SEND_TRADE_WAIT","POST_FILL_WAIT","LOOP_DELAY",
+    "AutoTravelEnabled",
+    -- tambahan agar toggle / UI lain terpersist:
+    "BypassVIP","NoClipEnabled","AutoObbyGoldEnabled"
+}
+
+
+local function getSavableState()
+    local out = {}
+    for _,k in ipairs(SAVABLE_KEYS) do
+        local v = state[k]
+        if v ~= nil then
+            -- copy simple tables shallowly (like selectedRarities / LuckyBlockTargets)
+            if type(v) == "table" then
+                local ok = true
+                for kk,vv in pairs(v) do
+                    if not (type(kk) == "string" or type(kk) == "number") or not (type(vv)=="boolean" or type(vv)=="string" or type(vv)=="number") then
+                        ok = false; break
+                    end
+                end
+                if ok then
+                    out[k] = {}
+                    for kk,vv in pairs(v) do out[k][kk] = vv end
+                end
+            elseif typeof and typeof(v) == "Vector3" then
+                out[k] = vec3ToTable(v)
+            else
+                out[k] = v
+            end
+        end
+    end
+
+    -- simpan juga important positions (convert to table)
+    out.START_POS = vec3ToTable(state.START_POS) or out.START_POS
+    out.END_POS = vec3ToTable(state.END_POS) or out.END_POS
+
+    -- metadata
+    out._meta = { saved_at = os.time() }
+
+    return out
+end
+
+local function applyLoadedConfig(data)
+    if type(data) ~= "table" then return end
+
+    --------------------------------------------------
+    -- APPLY SAVED KEYS
+    --------------------------------------------------
+    for _,k in ipairs(SAVABLE_KEYS) do
+        if data[k] ~= nil then
+            state[k] = data[k]
+        end
+    end
+
+    --------------------------------------------------
+    -- RESTORE VECTOR POSITIONS
+    --------------------------------------------------
+    if data.START_POS then
+        local v = tableToVec3(data.START_POS)
+        if v then state.START_POS = v end
+    end
+
+    if data.END_POS then
+        local v = tableToVec3(data.END_POS)
+        if v then state.END_POS = v end
+    end
+
+    --------------------------------------------------
+    -- RUNTIME ACTIONS (🔥 PENTING BANGET)
+    --------------------------------------------------
+
+    -- Bypass VIP
+    if state.BypassVIP then
+        pcall(function()
+            enableSelectiveNoClip()
+            enableVIPWallTouchBlock()
+        end)
+    else
+        pcall(function()
+            disableSelectiveNoClip()
+            disableVIPWallTouchBlock()
+        end)
+    end
+
+    -- Global NoClip
+    if state.NoClipEnabled then
+        pcall(enableNoClip)
+    else
+        pcall(disableNoClip)
+    end
+
+    -- Platform Builder
+    if state.platformEnabled then
+        pcall(enablePlatform)
+    else
+        pcall(disablePlatform)
+    end
+
+    -- Auto Obby Gold
+    if state.AutoObbyGoldEnabled then
+        pcall(function()
+            setupObbyListener()
+            startObbyGoldSequence()
+        end)
+    end
+
+    -- Auto Travel (delay-safe start: tunggu sedikit & pastikan kondisi aman)
+    do
+        -- jika user ingin AutoTravel mati, stop langsung
+        if not state.AutoTravelEnabled then
+            pcall(stopAutoTravel)
+        else
+            -- spawn async supaya tidak block applyLoadedConfig
+            task.spawn(function()
+                -- tunggu sedikit agar character/map/platform/scan stabil
+                task.wait(1.0)
+
+                -- jika ada subsystem prioritas (target active) maka tunggu hingga clear
+                local maxWait = 6.0
+                local waited = 0
+                while hasActiveTargets() and waited < maxWait do
+                    if DEBUG then print("[AutoTravel][applyLoadedConfig] waiting for active targets to clear...") end
+                    task.wait(0.5)
+                    waited = waited + 0.5
+                end
+
+                -- final safety: pastikan Floors ada dan WindUI siap
+                if not state.Floors or #state.Floors < 2 then
+                    if DEBUG then print("[AutoTravel][applyLoadedConfig] Floors not ready, attempting refreshFloorsFromMap()") end
+                    pcall(refreshFloorsFromMap)
+                    task.wait(0.4)
+                end
+
+                -- jika user masih mau AutoTravel, mulai
+                if state.AutoTravelEnabled then
+                    if DEBUG then print("[AutoTravel][applyLoadedConfig] starting AutoTravel after checks") end
+                    pcall(startAutoTravel)
+                else
+                    pcall(stopAutoTravel)
+                end
+            end)
+        end
+    end
+
+    -- Instant / Jump / Zoom
+    if state.InstantGrabEnabled then pcall(enableInstantGrab) else pcall(disableInstantGrab) end
+    if state.InfiniteJumpEnabled then pcall(enableInfiniteJump) else pcall(disableInfiniteJump) end
+    if state.InfiniteZoomEnabled then pcall(enableInfiniteZoom) else pcall(disableInfiniteZoom) end
+
+    --------------------------------------------------
+    -- AUTO COLLECT TARGET (PRIORITY SYSTEM)
+    --------------------------------------------------
+    if state.AutoCollectTarget then
+        pcall(function()
+            stopAutoMove()
+            startAutoCollectTarget()
+        end)
+    elseif state.AutoCollect then
+        if next(state.selectedRarities or {}) ~= nil then
+            state.autoCollectEnabled = true
+            pcall(startAutoCollectBrainrotByRarity)
+        end
+    end
+
+    if state.AutoRunEnabled then
+        state.autoMoveEnabled = true
+        pcall(function()
+            startAutoMoveToTarget(state.selectedFloorIndex or 1)
+        end)
+    end
+
+    --------------------------------------------------
+    -- NOTIFY
+    --------------------------------------------------
+    if state.WindUI then
+        state.WindUI:Notify({
+            Title = "Cloud Config",
+            Content = "Config applied.",
+            Duration = 2
+        })
+    end
+
+    --------------------------------------------------
+    -- SYNC UI VISUAL STATE
+    --------------------------------------------------
+    local function trySyncKey(k)
+        local val = state[k]
+        if val == nil then return end
+
+        local el = nil
+        if state.UI_ELEMENTS then
+            el = state.UI_ELEMENTS[k]
+                or state.UI_ELEMENTS[k:gsub("Enabled","")]
+                or state.UI_ELEMENTS[k.."Enabled"]
+        end
+
+        -- dropdown brainrot
+        if k == "selectedRarities" and el then
+            local list = {}
+            for name, enabled in pairs(state.selectedRarities or {}) do
+                if enabled then table.insert(list, name) end
+            end
+            safeSetUIElement(el, list)
+            return
+        end
+
+        -- dropdown lucky block
+        if k == "LuckyBlockTargets" and el then
+            local list = {}
+            for name, enabled in pairs(state.LuckyBlockTargets or {}) do
+                if enabled then table.insert(list, name) end
+            end
+            safeSetUIElement(el, list)
+            return
+        end
+
+        if el then
+            safeSetUIElement(el, val)
+        end
+    end
+
+    local keysToSync = {
+        "AutoCollect","AutoUpgrade","AutoBuySpeed","AutoRebirth","AutoBuyCarry",
+        "platformEnabled","AutoCollectTarget","AutoRunEnabled",
+        "AutoCollectRadioactive","AutoCollectUFO","AutoCollectGoldBar",
+        "AutoCollectTicket","AutoCollectGamer",
+        "InstantGrabEnabled","InfiniteJumpEnabled","InfiniteZoomEnabled",
+        "BypassVIP","NoClipEnabled","AutoObbyGoldEnabled",
+        "selectedRarities","LuckyBlockTargets",
+        "AutoTravelEnabled"  -- <- tambahkan ini
+    }
+
+    for _,k in ipairs(keysToSync) do
+        trySyncKey(k)
+    end
+end
+
+-- ===== improved request / save / load with diagnostics & slot fallback =====
+local function doRequest(reqConf)
+    -- small wrapper that returns { Body = ..., StatusCode = ... } or nil, err
+    local ok, res = pcall(function()
+        -- prefer native request libs when available
+        if type(request) == "function" then return request(reqConf) end
+        if syn and syn.request then return syn.request(reqConf) end
+        if http_request then return http_request(reqConf) end
+
+        -- fallback to HttpService
+        if reqConf.Method == "GET" then
+            local body = HttpService:GetAsync(reqConf.Url, true)
+            return { Body = body, StatusCode = 200 }
+        else
+            local body = HttpService:PostAsync(reqConf.Url, reqConf.Body or "", Enum.HttpContentType.ApplicationJson)
+            return { Body = body, StatusCode = 200 }
+        end
+    end)
+
+    if not ok then
+        return nil, res
+    end
+
+    -- some request wrappers (native libs can return different shapes)
+    if type(res) == "table" then
+        -- ensure Body + StatusCode keys exist
+        res.Body = res.Body or (res.body and res.body) or ""
+        res.StatusCode = res.StatusCode or res.status or res.Status or 200
+    else
+        -- unexpected shape: coerce to table
+        res = { Body = tostring(res), StatusCode = 200 }
+    end
+
+    if DEBUG then
+        pcall(function()
+            rconsoleprint(("[HTTP] %s %s -> %s\n"):format(reqConf.Method or "GET", reqConf.Url, tostring(res.StatusCode)))
+            rconsoleprint(("[HTTP BODY] %s\n"):format(tostring(res.Body)))
+        end)
+    end
+
+    return res
+end
+
+local function buildConfigPath(uid, slotName)
+    local base = "/users/" .. urlEncode(GAME_NAME) .. "/" .. tostring(uid)
+    if slotName and tostring(slotName) ~= "" then
+        return base .. "/slots/" .. tostring(slotName) .. ".json"
+    else
+        return base .. "/config.json"
+    end
+end
+
+local function saveConfigOnline(optUserId, slotName)
+    local uid = tostring(optUserId or userId or (Players.LocalPlayer and Players.LocalPlayer.UserId) or "unknown")
+    local data = getSavableState()
+    local json = HttpService:JSONEncode(data)
+
+    local targetPath = buildConfigPath(uid, slotName)
+    local conf = {
+        Url = FIREBASE_URL .. targetPath,
+        Method = "PATCH",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = json
+    }
+
+    local res, err = doRequest(conf)
+    if not res then
+        warn("[CloudSave] request failed:", tostring(err))
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Save", Content = "Failed to send request.", Duration = 3 }) end
+        return false
+    end
+
+    if tonumber(res.StatusCode) and tonumber(res.StatusCode) >= 200 and tonumber(res.StatusCode) < 300 then
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Save", Content = "Saved to cloud.", Duration = 2 }) end
+        return true
+    else
+        warn("[CloudSave] unexpected response:", res.Body)
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Save", Content = "Save returned error.", Duration = 3 }) end
+        return false
+    end
+end
+
+local function loadConfigOnline(optUserId, slotName)
+    local uid = tostring(optUserId or userId or (Players.LocalPlayer and Players.LocalPlayer.UserId) or "unknown")
+    local targetPath = buildConfigPath(uid, slotName)
+    local conf = { Url = FIREBASE_URL .. targetPath, Method = "GET" }
+
+    local res, err = doRequest(conf)
+    if not res then
+        warn("[CloudLoad] request failed:", tostring(err))
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Load", Content = "Failed to fetch (request error).", Duration = 3 }) end
+        return false
+    end
+
+    if not res.Body or res.Body == "null" then
+        -- fallback for slots listing ONLY when no slotName provided
+        if not slotName then
+            local trySlotsConf = { Url = FIREBASE_URL .. "/users/" .. urlEncode(GAME_NAME) .. "/" .. uid .. "/slots.json", Method = "GET" }
+            local res2 = doRequest(trySlotsConf)
+            if res2 and res2.Body and res2.Body ~= "null" then
+                local ok2, slots = pcall(function() return HttpService:JSONDecode(res2.Body) end)
+                if ok2 and type(slots) == "table" then
+                    for sname, sdata in pairs(slots) do
+                        if type(sdata) == "table" then
+                            applyLoadedConfig(sdata)
+                            if state.WindUI then state.WindUI:Notify({ Title = "Cloud Load", Content = "Loaded from slot: "..tostring(sname), Duration = 3 }) end
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Load", Content = "No cloud config found.", Duration = 2 }) end
+        return false
+    end
+
+    local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+    if not ok or type(data) ~= "table" then
+        warn("[CloudLoad] decode failed or not a table:", tostring(data))
+        if state.WindUI then state.WindUI:Notify({ Title = "Cloud Load", Content = "Invalid data format.", Duration = 3 }) end
+        return false
+    end
+
+    applyLoadedConfig(data)
+    return true
+end
+
+-- Slot helpers (multi-config)
+local function saveConfigToSlot(name) return saveConfigOnline(nil, name) end
+local function loadConfigFromSlot(name) return loadConfigOnline(nil, name) end
+
+local function deleteConfigOnline(optUserId, slotName)
+    local uid = tostring(optUserId or userId or (Players.LocalPlayer and Players.LocalPlayer.UserId) or "unknown")
+    local targetPath = buildConfigPath(uid, slotName)
+    local conf = { Url = FIREBASE_URL .. targetPath, Method = "DELETE" }
+    local res, err = doRequest(conf)
+    return (res ~= nil)
+end
+
+
+-- compatibility: button callbacks call without args
+-- adjust existing UI buttons to call saveConfigOnline() / loadConfigOnline()
+
 
 ------------------------------------------------------
 -- REMOTES
@@ -61,6 +545,10 @@ state.AutoSpinGoldBar = false
 state.InstantGrabEnabled = false
 state.InfiniteZoomEnabled = false
 state.InfiniteJumpEnabled = false
+
+-- NEW
+state.BypassVIP = false
+state.NoClipEnabled = false
 
 state.SelectiveNoClipEnabled = false
 state.vipNoClipConn = nil
@@ -109,6 +597,10 @@ state.brainrotCache = {}
 state.BRAINROT_PRIORITY_ORDER = {
     "Infinity","Divine","Celestial","Secret","Cosmic","Mythical","Legendary","Epic","Rare","Uncommon","Common"
 }
+state.RARITIES = {
+    "Infinity","Divine","Celestial","Secret","Cosmic","Mythical","Legendary","Epic","Rare","Uncommon","Common"
+}
+
 state.DEBUG_LUCKY = false
 state.LUCKY_RETRY_DELAY = 0.6     -- detik antar attempt
 state.LUCKY_MAX_ATTEMPTS = 6      -- retry sebelum reset
@@ -124,6 +616,7 @@ state.LUCKY_PRIORITY_ORDER = {
     "Admin","Divine","Celestial","Gamer","Radioactive","Void","UFO","Alien","Jackpot","Money",
     "Secret","Cosmic","Mythical","Legendary","Epic","Rare","Uncommon","Common"
 }
+state.RemoteEventsFolder = nil
 
 state.LUCKY_PRIORITY_MAP = {}
 for i, name in ipairs(state.LUCKY_PRIORITY_ORDER) do
@@ -200,7 +693,37 @@ state.OBBY_PAIRS = {
 
 state.AutoCollectTarget = false
 state.autoCollectTargetTask = nil
+state.vipWallListenerConn = nil
 
+-- Auto Trade / Auto Gift state (diperlukan untuk fitur dari script2)
+state.TargetPlayer = nil
+state.BrainrotSet = {}         -- map rarity -> true (selections for giving/trading)
+state.LuckySet = {}           -- map rarity -> true (selections for lucky blocks)
+
+state.AutoGift = false
+state.AutoGiftTask = nil
+
+state.AutoTrade = false
+state.AutoTradeTask = nil
+
+-- timing / slot configs (default values sesuai script2)
+state.MAX_SLOTS = 9
+state.SEND_TRADE_WAIT = 5.0   -- waktu tunggu setelah SendTrade sebelum mulai fill slots
+state.POST_FILL_WAIT = 4.0    -- waktu tunggu setelah fill slots sebelum tekan Accept
+state.POST_ACCEPT_WAIT = 5.0  -- waktu tunggu setelah tekan Accept sebelum loop berikutnya
+state.LOOP_DELAY = 2.0        -- delay tambahan di loop (tetap ada)
+
+-- remotes placeholders (akan di-init di Block B)
+state.SendGiftRF = nil
+state.SendTradeRF = nil
+state.SetSlotOfferRF = nil
+state.ReadyTradeRE = nil
+state.AutoTravelEnabled = false
+state.autoTravelTask = nil
+state.pendingRestartTravel = false
+
+state._autoTravelPaused = false
+state._autoTravelPausedByCollector = false
 ------------------------------------------------------
 -- HELPERS (functions kecil)
 ------------------------------------------------------
@@ -293,20 +816,587 @@ local function getLuckyPriority(name)
     return state.LUCKY_PRIORITY_MAP[tostring(name)] or (#state.LUCKY_PRIORITY_ORDER + 1)
 end
 
--- PATCH: refresh queue sesuai target (hapus items yg tidak match targets)
-local function refreshLuckyBlockQueueForTargets()
-    -- jika targets kosong => artinya semua diizinkan
-    if next(state.LuckyBlockTargets) == nil then return end
-    for i = #state.LuckyBlockQueue, 1, -1 do
-        local it = state.LuckyBlockQueue[i]
-        if it and it.blockType then
-            if not state.LuckyBlockTargets[it.blockType] then
-                table.remove(state.LuckyBlockQueue, i)
+-- =============================================
+-- AUTO TRAVEL: ambil CFrame floor asli dari map
+-- =============================================
+-- ============================
+-- DYNAMIC FLOOR SCANNER (patch)
+-- ============================
+local function safeGetCenterAndSize(inst)
+    -- returns centerX, sizeX, cframe, instRef
+    if not inst then return nil end
+    -- BasePart
+    if inst:IsA("BasePart") then
+        local cf = inst.CFrame
+        local sizeX = (inst.Size and inst.Size.X) or 0
+        return cf.Position.X, sizeX, cf, inst
+    end
+
+    -- Model -> try GetPivot / GetExtentsSize
+    if inst:IsA("Model") then
+        local ok, pivot = pcall(function() return inst:GetPivot() end)
+        local ok2, extents = pcall(function() return inst:GetExtentsSize() end)
+        if ok and pivot then
+            local sizeX = (ok2 and extents and extents.X) or 0
+            return pivot.Position.X, sizeX, pivot, inst
+        end
+    end
+
+    return nil
+end
+
+local function refreshFloorsFromMap()
+    local root = workspace:FindFirstChild("DefaultMap_SharedInstances")
+    if not root then
+        if DEBUG then print("[Floors] DefaultMap_SharedInstances not found") end
+        return
+    end
+    local floorsFolder = root:FindFirstChild("Floors")
+    if not floorsFolder then
+        if DEBUG then print("[Floors] Floors folder not found") end
+        return
+    end
+
+    local entries = {}
+    local nameCount = {}
+
+    for _, child in ipairs(floorsFolder:GetChildren()) do
+        local ok, cx, sizeX, cf, ref = pcall(function()
+            return safeGetCenterAndSize(child)
+        end)
+
+        if ok and cx then
+            local baseName = tostring(child.Name or "Floor")
+            nameCount[baseName] = (nameCount[baseName] or 0) + 1
+            local uniqueName = baseName
+            if nameCount[baseName] > 1 then
+                uniqueName = baseName .. tostring(nameCount[baseName]) -- e.g. "Cosmic2" or "Secret3"
+            end
+
+            table.insert(entries, {
+                name = uniqueName,
+                originalName = baseName,
+                x = cx,
+                size = sizeX or 0,
+                cframe = cf,
+                partRef = child
+            })
+        end
+    end
+
+    -- sort by center X ascending
+    table.sort(entries, function(a,b) return a.x < b.x end)
+
+    -- preserve START as index 1 if previously defined (fallback to state.START_POS)
+    local newFloors = {}
+    if state.Floors and state.Floors[1] and state.Floors[1].name == "Start" then
+        -- keep existing Start entry (so other code that expects Floors[1] = Start remains valid)
+        table.insert(newFloors, state.Floors[1])
+    else
+        -- create Start from state.START_POS if present
+        if state.START_POS then
+            table.insert(newFloors, { name = "Start", x = state.START_POS.X, size = 0, cframe = CFrame.new(state.START_POS), partRef = nil })
+        else
+            -- fallback: insert dummy start at left-most - small offset
+            if #entries > 0 then
+                local leftmost = entries[1].x - 100
+                table.insert(newFloors, { name = "Start", x = leftmost, size = 0, cframe = CFrame.new(leftmost, 0, 0), partRef = nil })
+            else
+                table.insert(newFloors, { name = "Start", x = 0, size = 0, cframe = CFrame.new(0,0,0), partRef = nil })
+            end
+        end
+    end
+
+    -- now append detected floors (avoid duplicating Start if a map child called "Start" exists near start X)
+    for _, e in ipairs(entries) do
+        local skip = false
+        if newFloors[1] and math.abs((newFloors[1].x or 0) - (e.x or 0)) <= 1 then
+            -- almost same as Start X -> skip
+            skip = true
+        end
+        if not skip then table.insert(newFloors, e) end
+    end
+
+    state.Floors = newFloors
+
+    if DEBUG then
+        print("[Floors] refreshed, count=", #state.Floors)
+        for i,f in ipairs(state.Floors) do
+            print(("  [%d] %s -> x=%.3f size=%.1f"):format(i, tostring(f.name), tonumber(f.x) or 0, tonumber(f.size) or 0))
+        end
+    end
+end
+
+-- improved getFloorCFrame: use partRef when available
+local function getFloorCFrame(floor)
+    if type(floor) == "string" then
+        -- accept name -> try find in state.Floors
+        for _, f in ipairs(state.Floors or {}) do
+            if f.name == floor or f.originalName == floor then
+                floor = f
+                break
+            end
+        end
+    end
+
+    if type(floor) == "table" then
+        if floor.partRef and floor.partRef.Parent then
+            local ok, cf = pcall(function()
+                if floor.partRef:IsA("BasePart") then return floor.partRef.CFrame end
+                return floor.partRef:GetPivot()
+            end)
+            if ok and cf then return cf end
+        end
+
+        -- fallback: if has name, try read from workspace map directly (legacy)
+        if floor.name then
+            local shared = workspace:FindFirstChild("DefaultMap_SharedInstances")
+            if shared and shared:FindFirstChild("Floors") then
+                local fobj = shared.Floors:FindFirstChild(floor.originalName or floor.name)
+                if fobj then
+                    local ok2, cf2 = pcall(function()
+                        if fobj:IsA("BasePart") then return fobj.CFrame end
+                        return fobj:GetPivot()
+                    end)
+                    if ok2 and cf2 then return cf2 end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+-- improved getFloorIndexByX: choose nearest floor by absolute distance on X
+local function getFloorIndexByX(x)
+    if not x then return 1 end
+    local bestIndex = 1
+    local bestDist = math.huge
+    for i, f in ipairs(state.Floors or {}) do
+        local fx = f and f.x or nil
+        if fx then
+            local d = math.abs(x - fx)
+            if d < bestDist then bestDist = d bestIndex = i end
+        end
+    end
+    return bestIndex
+end
+
+-- setup initial refresh + watcher (place after these function defs)
+pcall(function() refreshFloorsFromMap() end)
+
+-- install watcher so floor table updates when map changes
+pcall(function()
+    local root = workspace:FindFirstChild("DefaultMap_SharedInstances")
+    if root and root:FindFirstChild("Floors") then
+        local ff = root.Floors
+        if not state.floorsWatcherConn then
+            state.floorsWatcherConn = ff.ChildAdded:Connect(function() task.defer(refreshFloorsFromMap) end)
+            ff.ChildRemoved:Connect(function() task.defer(refreshFloorsFromMap) end)
+            -- optional: also react to property changes (size/cframe) using DescendantAdded? expensive so omitted
+        end
+    end
+end)
+
+local function getFloorCFrame(floorName)
+    local shared = workspace:FindFirstChild("DefaultMap_SharedInstances")
+    if not shared then return nil end
+    local floors = shared:FindFirstChild("Floors")
+    if not floors then return nil end
+    local floorObj = floors:FindFirstChild(floorName)
+    if not floorObj then return nil end
+
+    -- Coba ambil pivot (untuk Model) atau CFrame (untuk Part)
+    local ok, cf = pcall(function()
+        if floorObj:IsA("BasePart") then
+            return floorObj.CFrame
+        else
+            return floorObj:GetPivot()
+        end
+    end)
+    return ok and cf or nil
+end
+
+-- Cek apakah Auto Collect Target sedang memiliki target aktif (benar-benar ada pekerjaan)
+local function hasActiveTargets()
+    -- Jika AutoCollectTarget tidak aktif => tidak ada prioritas
+    if not state.AutoCollectTarget then return false end
+
+    -- Lucky Block: aktif dan ada antrian nyata
+    if state.autoCollectBlockEnabled and (#state.LuckyBlockQueue or 0) > 0 then
+        return true
+    end
+
+    -- Brainrot: only count as active if collector enabled AND there are actually brainrots in cache
+    if state.autoCollectEnabled and next(state.selectedRarities or {}) ~= nil then
+        for rarity, list in pairs(state.brainrotCache or {}) do
+            if state.selectedRarities[rarity] and list and #list > 0 then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+-- ============================
+-- AUTO TRAVEL PAUSE / RESUME
+-- ============================
+-- Pause AutoTravel tanpa mengubah preferensi user (state.AutoTravelEnabled tetap utuh)
+local function pauseAutoTravel()
+    if state._autoTravelPaused then return end
+    state._autoTravelPaused = true
+    -- cancel running task (jangan set AutoTravelEnabled = false)
+    if state.autoTravelTask then
+        pcall(function() task.cancel(state.autoTravelTask) end)
+        state.autoTravelTask = nil
+    end
+    -- hentikan tween yang mungkin masih berjalan
+    cancelLastTween()
+    if DEBUG then print("[AutoTravel] paused by system") end
+end
+
+local function resumeAutoTravel()
+    if not state._autoTravelPaused then return end
+    state._autoTravelPaused = false
+    
+    -- 🔥 FORCE NIL TASK REFERENCE (critical fix)
+    if state.autoTravelTask then
+        pcall(function() task.cancel(state.autoTravelTask) end)
+        state.autoTravelTask = nil
+    end
+    
+    -- restart tugas auto travel jika user masih menginginkan AutoTravel
+    if state.AutoTravelEnabled then
+        if DEBUG then print("[AutoTravel] force spawning new task on resume") end
+        pcall(startAutoTravel)
+    end
+    
+    if DEBUG then print("[AutoTravel] resumed by system") end
+end
+
+-- guard cooldown supaya tidak spam start/resume berulang
+local _lastAutoTravelResume = 0
+local _AUTO_TRAVEL_RESUME_COOLDOWN = 1.0 -- detik
+
+-- helper: jika pause oleh collector tapi sekarang tidak ada target, resume AutoTravel
+local function maybeResumeAutoTravelWhenIdle()
+    -- only resume if AutoTravel was paused by collector AND user still wants AutoTravel
+    if not state.AutoTravelEnabled then return end
+    if state._autoTravelPaused and state._autoTravelPausedByCollector and not hasActiveTargets() then
+        local now = tick()
+        if now - _lastAutoTravelResume < _AUTO_TRAVEL_RESUME_COOLDOWN then
+            if DEBUG then print("[AutoTravel] resume suppressed by cooldown") end
+            return
+        end
+        _lastAutoTravelResume = now
+
+        if DEBUG then print("[AutoTravel] Collector idle -> resuming AutoTravel (guarded)") end
+        state._autoTravelPausedByCollector = false
+        state._autoTravelPaused = false
+        pcall(resumeAutoTravel)
+    end
+end
+
+local SellState = {
+    scanResults = {},
+    chosenTypes = {},
+    levelThreshold = 1,
+}
+
+SellState.BRAINROT_LISTS = {
+    Celestial = { 
+        "Diamantusa","Caffe Trinity","Alessio","Job Job Job Sahur","Dug Dug Dug",
+        "Bisonte Giuppitere","Esok Sekolah","Zung Zung Zung Lazur","Avocadini Antilopini",
+        "Los Orcaleritos","Capuccino Policia","Rattini Machini","La Malita","Money Elephant"
+    },
+    Cosmic = { 
+        "Darlungini Pandanneli","Vroosh Boosh","Nuclearo Dinossauro","La Grande Combinasion",
+        "Garama and Madundung","Dragon Cannelloni","Chimpanzini Spiderini","Agarrini la Palini",
+        "Las Vaquitas Saturnitas","Graipuss Medussi","Torrtuginni Dragonfrutini",
+        "Los Tralaleritos","La Vacca Saturno Saturnita","Pot Hotspot",
+        "Las Tralaleritas","Chicleteira Bicicleteira"
+    },
+    Epic = { 
+        "Blueberrinni Octopussini","Ballerina Cappuccina","Burbaloni Luliloli",
+        "Strawberrelli Flamingelli","Sigma Boy","Pi Pi Watermelon","Pandaccini Bananini",
+        "Lionel Cactuseli","Guesto Angelic","Cocosini Mama","Chef Crabracadabra",
+        "Chimpanzini Bananini","Glorbo Fruttodrillo"
+    },
+    Legendary = { 
+        "Eaglucci Cocosucci","Zibra Zubra Zibralini","Tigrilini Watermelini",
+        "Spioniro Golubiro","Rhino Toasterino","Orangutini Ananasini",
+        "Gorillo Watermelondrillo","Ganganzelli Trulala","Frigo Camelo",
+        "Bombombini Gusini","Bombardiro Crocodilo","Avocadorilla","Cavallo Virtuoso"
+    },
+    Mythical = { 
+        "Ballerino Lololo","Cocofanto Elefanto","Los Crocodillitos","Piccione Macchina",
+        "Tigroligre Frutonni","Trenostruzzo Turbo 3000",
+        "Trippi Troppi Troppa Trippa","Tukanno Bananno","Udin Din Din Dun",
+        "Orcalero Orcala","Giraffa Celeste","Tralalero Tralala"
+    },
+    Rare = { 
+        "Trulimero Trulicina","Ti Ti Ti Sahur","Salamino Penguino",
+        "Perochello Lemonchello","Penguino Cocosino","Cappuccino Assassino",
+        "Bananita Dolphinita","Bambini Crostini","Brr Brr Patapim","Avocadini Guffo"
+    },
+    Secret = { 
+        "Bambooini Bombini","Eek Eek Eek Sahur","Rainbow 67",
+        "La Vacca Black Hole Goat","Fragola La La La","Aura Farma",
+        "Los Tungtungtungcitos","Los Combinasionas","Espresso Signora",
+        "Unclito Samito","Gattatino Neonino","Gatattino Donutino",
+        "Statutino Libertino","Capybara Monitora","Tractoro Dinosauro",
+        "Mastodontico Telepiedone","Patatino Astronauta","Matteo",
+        "Patito Dinerito","Onionello Penguini"
+    },
+    Uncommon = { 
+        "Trippi Troppi","Tric Tric Baraboom","Ta Ta Ta Sahur","Pipi Avocado",
+        "Gangster Footera","Cacto Hipopotamo","Boneca Ambalabu",
+        "Bobrito Bandito","67"
+    },
+    Common = { 
+        "Tim Cheese","Talpa Di Fero","Svinino Bombondino","Pipi Kiwi",
+        "Pipi Corni","Noobini Cakenini","Lirili Larila","Frulli Frulla"
+    },
+    Divine = { 
+        "Strawberry Elephant","Burgerini Bearini","Bulbito Bandito Traktorito",
+        "Martino Gravitino","Galactio Fantasma","Din Din Vaultero","Grappellino D'Oro"
+    },
+    Infinity = { "Noobini Infeeny" }
+}
+
+local function buildLookups()
+    SellState.BRAINROT_LOOKUP = {}
+    for rarity, list in pairs(SellState.BRAINROT_LISTS) do
+        local t = {}
+        for _, name in ipairs(list) do t[string.lower(name)] = true end
+        SellState.BRAINROT_LOOKUP[rarity] = t
+    end
+end
+
+buildLookups() -- ← BUILD IMMEDIATELY
+
+------------------------------------------------------
+-- AUTO TRADE SECION CORE FUNCTIONS
+------------------------------------------------------
+-- <<===== ADD THIS BLOCK INTO HELPERS / CORE SECTION (before UI window creation) =====>>
+-- Safe, robust helpers untuk fitur Auto Trade / Auto Gift
+local function getRemote(path)
+    if not path or type(path) ~= "table" then return nil end
+    local cur = ReplicatedStorage
+    for _, p in ipairs(path) do
+        if not cur then return nil end
+        cur = cur:FindFirstChild(p)
+    end
+    return cur
+end
+
+local function initTradeRemotes()
+    -- initialize once, safe pcall
+    state.SendGiftRF     = state.SendGiftRF     or getRemote({ "Packages","Net","RF/Trade.SendGift" })
+    state.SendTradeRF    = state.SendTradeRF    or getRemote({ "Packages","Net","RF/Trade.SendTrade" })
+    state.SetSlotOfferRF = state.SetSlotOfferRF or getRemote({ "Packages","Net","RF/Trade.SetSlotOffer" })
+    state.ReadyTradeRE   = state.ReadyTradeRE   or getRemote({ "Packages","Net","RE/Trade.ReadyTrade" })
+    -- fallback / older structure
+    state.RemoteEventsFolder = state.RemoteEventsFolder or ReplicatedStorage:FindFirstChild("RemoteEvents")
+end
+
+local function getBackpack()
+    return Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("Backpack")
+end
+
+local function getPlayerNames()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(out, p.Name) end
+    end
+    table.sort(out)
+    return out
+end
+
+-- Build name->rarity map from SellState if available
+local function ensureNameToRarityMap()
+    if not state.BRAINROT_NAME_TO_RARITY or next(state.BRAINROT_NAME_TO_RARITY or {}) == nil then
+        state.BRAINROT_NAME_TO_RARITY = state.BRAINROT_NAME_TO_RARITY or {}
+        if type(SellState) == "table" and SellState.BRAINROT_LISTS then
+            for rarity, list in pairs(SellState.BRAINROT_LISTS) do
+                for _, name in ipairs(list) do
+                    if name and type(name) == "string" then
+                        state.BRAINROT_NAME_TO_RARITY[name] = rarity
+                    end
+                end
             end
         end
     end
 end
 
+-- Scan backpack for brainrots matching selectedSet (map rarity->true)
+local function scanBrainrotsByRarity(selectedSet)
+    local results = {}
+    if not selectedSet or next(selectedSet or {}) == nil then return results end
+    local bp = getBackpack()
+    if not bp then return results end
+
+    ensureNameToRarityMap()
+
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool and tool:IsA("Tool") then
+            local rm = tool:FindFirstChild("RenderModel")
+            if rm and rm.GetAttribute then
+                local ok, name = pcall(function() return rm:GetAttribute("BrainrotName") end)
+                name = ok and name and tostring(name) or nil
+
+                local rarity = nil
+                if name then
+                    rarity = state.BRAINROT_NAME_TO_RARITY[name]
+                end
+
+                if not rarity then
+                    local ok2, r2 = pcall(function() return rm:GetAttribute("Rarity") or rm:GetAttribute("BrainrotRarity") end)
+                    rarity = ok2 and r2 and tostring(r2) or nil
+                end
+
+                if rarity and selectedSet[rarity] then
+                    table.insert(results, {
+                        uuid = tool.Name,
+                        rarity = rarity,
+                        brainrotName = name,
+                        tool = tool,
+                        type = "brainrot"
+                    })
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+-- Scan backpack for lucky blocks matching selectedSet (map rarity->true)
+local function scanLuckyBlocksByRarity(selectedSet)
+    local results = {}
+    if not selectedSet or next(selectedSet or {}) == nil then return results end
+    local bp = getBackpack()
+    if not bp then return results end
+
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool and tool:IsA("Tool") then
+            local rig = tool:FindFirstChild("LuckyBlockRig")
+            if rig and rig.GetAttribute then
+                local ok, r = pcall(function() return rig:GetAttribute("LuckyBlockType") end)
+                local rarity = ok and r and tostring(r) or nil
+                if rarity and selectedSet[rarity] then
+                    table.insert(results, {
+                        uuid = tool.Name,
+                        rarity = rarity,
+                        tool = tool,
+                        type = "lucky"
+                    })
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+-- Collect items prioritized: lucky first then brainrot
+local function collectItemsForTrade()
+    local out = {}
+    for _, v in ipairs(scanLuckyBlocksByRarity(state.LuckySet or {})) do table.insert(out, v) end
+    for _, v in ipairs(scanBrainrotsByRarity(state.BrainrotSet or {})) do table.insert(out, v) end
+    return out
+end
+
+-- perform a single gift to target player using entry (entry.tool must be in backpack)
+-- returns ok(boolean), info(string)
+local function performSingleGift(target, entry)
+    if not target or not target.Parent then return false, "no_target" end
+    if not entry or not entry.tool or not entry.tool.Parent then return false, "no_tool" end
+
+    -- equip then attempt RF or fallback RemoteEvents
+    local hum = getHumanoid()
+    if hum then
+        pcall(function() hum:EquipTool(entry.tool) end)
+        task.wait(0.12)
+    end
+
+    initTradeRemotes()
+
+    if state.SendGiftRF and state.SendGiftRF.InvokeServer then
+        local ok, res = pcall(function() return state.SendGiftRF:InvokeServer(target) end)
+        if ok then return true, res else return false, tostring(res) end
+    end
+
+    -- fallback: RemoteEvents PromptGift
+    if state.RemoteEventsFolder and state.RemoteEventsFolder:FindFirstChild("PromptGift") then
+        local fallback = state.RemoteEventsFolder:FindFirstChild("PromptGift")
+        local ok, err = pcall(function() fallback:FireServer(target) end)
+        return ok, ok and "fallback_prompt" or tostring(err)
+    end
+
+    return false, "no_method"
+end
+
+-- perform one trade iteration using state.* remotes. returns ok(boolean), info (string or number)
+local function performTradeIteration(target)
+    if not target or not target.Parent then return false, "no_target" end
+
+    initTradeRemotes()
+
+    local items = collectItemsForTrade()
+    if not items or #items == 0 then return false, "no_items" end
+
+    if state.SendTradeRF and state.SendTradeRF.InvokeServer then
+        local ok, err = pcall(function() state.SendTradeRF:InvokeServer(target) end)
+        if not ok then return false, tostring(err) end
+    else
+        return false, "no_sendtrade_rf"
+    end
+
+    -- tunggu sebelum mulai mengisi slot (biarkan server buka trade window)
+    task.wait(tonumber(state.SEND_TRADE_WAIT) or 5.0)
+
+    local toFill = math.min(#items, tonumber(state.MAX_SLOTS) or 9)
+    local filled = 0
+    for slot = 1, toFill do
+        local entry = items[slot]
+        if entry and entry.uuid and state.SetSlotOfferRF and state.SetSlotOfferRF.InvokeServer then
+            pcall(function()
+                -- server expects slot index string and uuid string in many implementations
+                state.SetSlotOfferRF:InvokeServer(tostring(slot), tostring(entry.uuid))
+            end)
+            filled = filled + 1
+            task.wait(0.2)
+        end
+    end
+
+    if filled == 0 then
+        return false, "no_slots_filled"
+    end
+
+    -- tunggu setelah fill sesuai keinginan (mis. 4 detik)
+    task.wait(tonumber(state.POST_FILL_WAIT) or 4.0)
+
+    -- tekan Accept / ReadyTrade (safe pcall)
+    if state.ReadyTradeRE and state.ReadyTradeRE.FireServer then
+        pcall(function() state.ReadyTradeRE:FireServer(true) end)
+    end
+
+    -- TUNGGU LAMA SETELAH ACCEPT agar trade sempat diproses (mis. 5 detik)
+    task.wait(tonumber(state.POST_ACCEPT_WAIT) or 5.0)
+
+    -- kembalikan sukses + jumlah slot terisi
+    return true, filled
+end
+
+-- Export helpers into state for easier reuse by UI callbacks
+state.initTradeRemotes = initTradeRemotes
+state.getPlayerNames = getPlayerNames
+state.collectItemsForTrade = collectItemsForTrade
+state.performSingleGift = performSingleGift
+state.performTradeIteration = performTradeIteration
+-- <<===== END AUTO TRADE / GIFT HELPERS =====>>
 
 ------------------------------------------------------
 -- OBBY GOLD: start/stop + listener + sequence
@@ -326,7 +1416,7 @@ local function startObbyGoldSequence()
         end
 
         if not next(state.obbyPartCache) then
-            state.WindUI:Notify({ Title = "Obby Gold Error", Content = "MoneyObby parts not found in workspace", Duration = 3 })
+            state.WindUI:Notify({ Title = "Obby Gold Error", Content = "Obby Not Found", Duration = 3 })
             state.isRunningObbySequence = false
             state.AutoObbyGoldEnabled = false
             return
@@ -345,7 +1435,7 @@ local function startObbyGoldSequence()
                 print("[Obby Gold] Step", step, "- Processing", pair.start, "→", pair.finish)
                 print("[Obby Gold] Teleporting to", pair.start)
                 if teleportToPart(startPart) then
-                    state.WindUI:Notify({ Title = "Obby Gold", Content = string.format("Step %d/%d: Teleported to %s", step, #state.OBBY_PAIRS, pair.start), Duration = 2 })
+                    state.WindUI:Notify({ Title = "Obby Gold", Content = "Running...", Duration = 2 })
                 else
                     print("[Obby Gold] Failed to teleport to", pair.start)
                     continue
@@ -353,7 +1443,7 @@ local function startObbyGoldSequence()
                 task.wait(1)
                 print("[Obby Gold] Teleporting to", pair.finish)
                 if teleportToPart(endPart) then
-                    state.WindUI:Notify({ Title = "Obby Gold", Content = string.format("Step %d/%d: Teleported to %s", step, #state.OBBY_PAIRS, pair.finish), Duration = 2 })
+                    state.WindUI:Notify({ Title = "Obby Gold", Content = "Running...", Duration = 2 })
                 else
                     print("[Obby Gold] Failed to teleport to", pair.finish)
                 end
@@ -382,7 +1472,7 @@ local function stopObbyGold()
     state.obbyCurrentStep = 0
     if state.obbyGoldTask then task.cancel(state.obbyGoldTask); state.obbyGoldTask=nil end
     if obbyListenerConn then obbyListenerConn:Disconnect(); obbyListenerConn=nil end
-    state.WindUI:Notify({ Title = "Obby Gold", Content = "Auto Obby Gold stopped", Duration = 2 })
+    state.WindUI:Notify({ Title = "Obby Gold", Content = "Stopped.", Duration = 2 })
     print("[Obby Gold] System completely stopped")
 end
 
@@ -598,7 +1688,7 @@ local function cleanupCoinCollector()
 end
 
 local PROCESS_PER_TYPE = 12
-local DISTANCE_THRESHOLD = 500
+local DISTANCE_THRESHOLD = 5000 -- distance max untuk auto collect coin
 
 RunService.Heartbeat:Connect(function()
     if not (state.AutoCollectRadioactive or state.AutoCollectUFO or state.AutoCollectGoldBar) then return end
@@ -929,51 +2019,95 @@ end
 
 
 local function moveHRPToPosition(targetPosVec3, speedMultiplier)
-    if not targetPosVec3 then return end
+    if not targetPosVec3 then return false end
     cancelLastTween()
+
     local hrp = getRoot()
     local hum = getHumanoid()
-    if not hrp or not hum then return end
+    if not hrp or not hum then return false end
+
     local startPos = hrp.Position
     local targetPos = Vector3.new(targetPosVec3.X, startPos.Y, targetPosVec3.Z)
-    local dist = (startPos - targetPos).Magnitude
-    if dist < 1 then return end
-    local speed = (state.TWEEN_SPEED * (speedMultiplier or 1))
-    local time = math.clamp(dist / speed, 0.12, 2.0)
-    local previousState = hum:GetState()
+    local distance = (startPos - targetPos).Magnitude
+    if distance < 1 then return true end
+
+    local speed = (state.TWEEN_SPEED or 400) * (speedMultiplier or 1)
+    local duration = math.clamp(distance / speed, 0.12, 2.5)
+
+    -- Set Physics state agar tween bisa berjalan
+    local prevState = hum:GetState()
     hum:ChangeState(Enum.HumanoidStateType.Physics)
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0)
+
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, 0)
     local tween = TweenService:Create(hrp, tweenInfo, {CFrame = CFrame.new(targetPos)})
     state.lastTween = tween
+
     local completed = false
-    local connection
-    connection = tween.Completed:Connect(function()
+    local conn
+    conn = tween.Completed:Connect(function()
         completed = true
-        if connection then connection:Disconnect() end
+        conn:Disconnect()
     end)
+
     tween:Play()
+
+    -- Tunggu hingga tween selesai atau timeout
     local startTime = tick()
-    local maxWaitTime = time + 2.0
-    while not completed and (tick() - startTime) < maxWaitTime do task.wait(0.05) end
-    if not completed then pcall(function() tween:Cancel() end) end
-    if connection and connection.Connected then connection:Disconnect() end
-    if state.lastTween == tween then state.lastTween = nil end
-    hum:ChangeState(Enum.HumanoidStateType.Running)
+    local timeout = duration + 2.0
+    while not completed and (tick() - startTime) < timeout do
+        task.wait(0.05)
+    end
+
+    if not completed then
+        pcall(function() tween:Cancel() end)
+    end
+
+    if conn and conn.Connected then
+        conn:Disconnect()
+    end
+
+    state.lastTween = nil
+    hum:ChangeState(prevState or Enum.HumanoidStateType.Running)
+
+    -- ===== VALIDASI AKHIR =====
+    local finalHrp = getRoot()
+    if finalHrp then
+        local finalDist = (finalHrp.Position - targetPos).Magnitude
+        if finalDist > 8 then
+            -- Jika masih jauh, teleport paksa
+            pcall(function() finalHrp.CFrame = CFrame.new(targetPos) end)
+            task.wait(0.05)
+        end
+    end
+
+    return true
 end
 
 local function tweenToFloor(floor, isAutoMove)
-    if not floor or not floor.name then return end
+    if not floor or not floor.name then return false end
+
+    -- Ambil CFrame asli dari map
+    local cf = getFloorCFrame(floor.name)
+    local targetX = cf and cf.Position.X or floor.x
     local hrp = getRoot()
-    if not hrp then return end
+    if not hrp then return false end
     local hum = getHumanoid()
-    if hum and hum.Health <= 0 then return end
+    if hum and hum.Health <= 0 then return false end
+
+    -- Posisi target di platform (Y=0, Z sesuai konstanta)
+    local targetZ = state.START_POS.Z
+        - state.PLATFORM_WIDTH_Z/2
+        - state.WALL_THICKNESS/2
+        + state.WALL_IN_OUT_OFFSET
+        - state.WALL_SAFE_DISTANCE
+
+    local targetPos = Vector3.new(targetX, 0, targetZ)
     local speedMult = isAutoMove and state.AUTO_MOVE_SPEED_MULT or 1
-    local targetZ = state.START_POS.Z - state.PLATFORM_WIDTH_Z/2 - state.WALL_THICKNESS/2 + state.WALL_IN_OUT_OFFSET - state.WALL_SAFE_DISTANCE
-    local targetPos = Vector3.new(floor.x, 0, targetZ)
-    local success, err = pcall(function() moveHRPToPosition(targetPos, speedMult) end)
-    if not success then
-        state.WindUI:Notify({ Title = "Tween Error", Content = "Gagal berpindah ke " .. floor.name, Duration = 2 })
-    end
+
+    local success = pcall(function()
+        moveHRPToPosition(targetPos, speedMult)
+    end)
+    return success
 end
 
 local function destroyList(t)
@@ -985,6 +2119,118 @@ local function clearClientParts()
     destroyList(state.wallParts)
     state.platformParts = {}
     state.wallParts = {}
+end
+
+-- ============================
+-- AUTO TRAVEL PAUSE / RESUME
+-- ============================
+-- Pause AutoTravel tanpa mengubah preferensi user (state.AutoTravelEnabled tetap utuh)
+local function pauseAutoTravel()
+    if state._autoTravelPaused then return end
+    state._autoTravelPaused = true
+    -- cancel running task (jangan set AutoTravelEnabled = false)
+    if state.autoTravelTask then
+        pcall(function() task.cancel(state.autoTravelTask) end)
+        state.autoTravelTask = nil
+    end
+    -- hentikan tween yang mungkin masih berjalan
+    cancelLastTween()
+    if DEBUG then print("[AutoTravel] paused by system") end
+end
+
+local function resumeAutoTravel()
+    if not state._autoTravelPaused then return end
+    state._autoTravelPaused = false
+    -- restart tugas auto travel jika user masih menginginkan AutoTravel
+    if state.AutoTravelEnabled and not state.autoTravelTask then
+        -- gunakan pcall agar aman
+        pcall(startAutoTravel)
+    end
+    if DEBUG then print("[AutoTravel] resumed by system") end
+end
+
+-- =============================================
+-- AUTO TRAVEL CORE
+-- =============================================
+local function startAutoTravel()
+    -- allow resume if paused by collector but there are no active targets now
+    if state._autoTravelPaused then
+        if state._autoTravelPausedByCollector and not hasActiveTargets() and state.AutoTravelEnabled then
+            if DEBUG then print("[AutoTravel] unpausing (collector idle) and proceeding to start") end
+            state._autoTravelPaused = false
+            state._autoTravelPausedByCollector = false
+        else
+            if DEBUG then print("[AutoTravel] start requested but currently paused; aborting start") end
+            return
+        end
+    end
+
+    if state.autoTravelTask then 
+        if DEBUG then print("[AutoTravel] Task already exists, cancelling old one") end
+        task.cancel(state.autoTravelTask)
+        state.autoTravelTask = nil
+    end
+
+    if DEBUG then print("[AutoTravel] Starting... AutoTravelEnabled =", state.AutoTravelEnabled) end
+    state.autoTravelTask = task.spawn(function()
+        print("[AutoTravel] Task spawned")
+        while state.AutoTravelEnabled do
+            print("[AutoTravel] Loop - hasActiveTargets =", hasActiveTargets())
+            
+            if hasActiveTargets() then
+                print("[AutoTravel] PAUSED due to active targets")
+                task.wait(0.5)
+                continue
+            end
+
+            -- 1. Pastikan di Start Floor
+            local startFloor = state.Floors[1]
+            local hrp = getRoot()
+            if hrp then
+                local distToStart = math.abs(hrp.Position.X - startFloor.x)
+                print("[AutoTravel] Distance to Start:", distToStart)
+                if distToStart > 8 then
+                    print("[AutoTravel] Moving to Start...")
+                    tweenToFloor(startFloor, true)
+                    task.wait(0.6)
+                end
+            else
+                print("[AutoTravel] HRP is nil")
+            end
+
+            -- 2. Maju dari Common sampai Celestial
+            for i = 2, #state.Floors do
+                if not state.AutoTravelEnabled then break end
+                if hasActiveTargets() then 
+                    print("[AutoTravel] PAUSED during travel")
+                    break 
+                end
+                
+                local floor = state.Floors[i]
+                print("[AutoTravel] Moving to", floor.name)
+                tweenToFloor(floor, true)
+                task.wait(0.5)
+            end
+
+            -- 3. Kembali ke Start
+            if state.AutoTravelEnabled and not hasActiveTargets() then
+                print("[AutoTravel] Returning to Start")
+                tweenToFloor(state.Floors[1], true)
+                task.wait(0.5)
+            end
+        end
+        print("[AutoTravel] Task ended")
+        state.autoTravelTask = nil
+    end)
+end
+
+local function stopAutoTravel()
+    state.AutoTravelEnabled = false
+    if state.autoTravelTask then
+        task.cancel(state.autoTravelTask)
+        state.autoTravelTask = nil
+    end
+    cancelLastTween()
 end
 
 local function createPart(props)
@@ -1270,9 +2516,18 @@ local function stopAllAutoCollect()
     state.pendingRestartCollect = false
     state.pendingRestartCollectRarity = false
     state.brainrotCache = {}
-    state.WindUI:Notify({ Title = "Auto Collect Dimatikan", Content = "Scanner dan semua movement dihentikan", Duration = 2 })
+    state.WindUI:Notify({ Title = "Auto Collect", Content = "Stopped.", Duration = 2 })
     print("[SYSTEM] All auto collect systems stopped (manual stop)")
 end
+
+local old_stopAllAutoCollect = stopAllAutoCollect
+stopAllAutoCollect = function(...)
+    if DEBUG then
+        print("[DEBUG] stopAllAutoCollect called. stack:\n" .. (debug.traceback("",2) or "no traceback"))
+    end
+    return old_stopAllAutoCollect(...)
+end
+
 
 -- startAutoCollectBrainrot (floor-based)
 local function startAutoCollectBrainrot(targetFloorIndex)
@@ -1307,6 +2562,7 @@ local luckyWatcherConnAdded, luckyWatcherConnRemoved, workspaceChildAddedConn = 
 local function enqueueExistingLuckyBlocks()
     local root = Workspace:FindFirstChild("ActiveLuckyBlocks")
     if not root then return end
+    
     for _, lb in ipairs(root:GetChildren()) do
         if lb and lb.Parent and not state.LuckyBlockSeen[lb] then
             local ok, pivotPos = pcall(function() return safeGetPivotPosition(lb) end)
@@ -1321,13 +2577,15 @@ local function enqueueExistingLuckyBlocks()
                         spawnedFloor = trim(safeGetAttr(lb, "SpawnedFloor") or ""),
                         blockType = blockType,
                         attempts = 0,
-                        lastTry = 0
+                        lastTry = 0,
+                        queuedAt = tick()  -- Tambahkan timestamp untuk sorting
                     })
                 end
             end
         end
     end
-    -- sort queue whenever we bulk-enqueued
+    
+    -- sort queue setelah menambahkan
     sortLuckyBlockQueue()
 end
 
@@ -1420,7 +2678,49 @@ local function stopAutoCollectLuckyBlock()
     -- jangan auto-disable platform (biar user bisa kontrol)
 end
 
--- PATCH: startAutoCollectLuckyBlock (tunda tween jika queue kosong; enable platform only when needed)
+-- helper: pastikan kembali ke START dengan retry + fallback
+local function ensureReturnToStart(maxRetries)
+    maxRetries = tonumber(maxRetries) or 3
+    local tries = 0
+    local targetFloor = state.Floors[1]
+    if not targetFloor then return end
+
+    local function atStart()
+        local hrp = getRoot()
+        if not hrp then return false end
+        return math.abs(hrp.Position.X - (targetFloor.x or 0)) <= 8 -- threshold bisa di-tune
+    end
+
+    while tries < maxRetries and not atStart() do
+        tries = tries + 1
+        -- gunakan pcall untuk menghindari error blocking
+        pcall(function() tweenToFloor(targetFloor, true) end)
+        task.wait(0.28) -- beri waktu tween + replication
+        -- jika setelah tween masih belum dekat, coba langsung moveHRPToPosition ke base pos
+        if not atStart() then
+            local basePos = getBasePositionForFloor(targetFloor)
+            if basePos then
+                pcall(function() moveHRPToPosition(basePos, state.AUTO_MOVE_SPEED_MULT) end)
+            end
+            task.wait(0.22)
+        end
+    end
+
+    -- final check: jika masih belum di start, lakukan satu kali respawn attempt (safer fallback)
+    if not atStart() then
+        if state.DEBUG_LUCKY then
+            print("[LuckyFix] ensureReturnToStart: fallback teleporting to exact X")
+        end
+        local hrp = getRoot()
+        local basePos = getBasePositionForFloor(targetFloor)
+        if hrp and basePos then
+            pcall(function() hrp.CFrame = CFrame.new(Vector3.new(targetFloor.x or basePos.X, hrp.Position.Y, basePos.Z)) end)
+            task.wait(0.12)
+        end
+    end
+end
+
+-- PERBAIKAN: Fungsi startAutoCollectLuckyBlock - Pastikan karakter selalu kembali ke posisi start setelah mengolah block
 local function startAutoCollectLuckyBlock()
     if state.autoCollectBlockTask then return end
 
@@ -1435,7 +2735,7 @@ local function startAutoCollectLuckyBlock()
             if #state.LuckyBlockQueue == 0 then
                 enqueueExistingLuckyBlocks()
 
-                -- jika masih kosong → exit lucky mode
+                -- Jika masih kosong → exit lucky mode
                 if #state.LuckyBlockQueue == 0 then
                     state.autoCollectBlockEnabled = false
                     break -- ⬅️ KELUAR DARI LOOP LUCKY BLOCK
@@ -1454,21 +2754,21 @@ local function startAutoCollectLuckyBlock()
             local lb = blockData.model
             local pos = blockData.pos
 
-            -- jika block sudah hilang → sukses
+            -- Jika block sudah hilang → sukses
             if not lb or not lb.Parent then
                 table.remove(state.LuckyBlockQueue, 1)
                 task.wait(0.1)
                 continue
             end
 
-            -- retry delay
+            -- Retry delay
             if tick() - (blockData.lastTry or 0) < state.LUCKY_RETRY_DELAY then
                 table.insert(state.LuckyBlockQueue, table.remove(state.LuckyBlockQueue, 1))
                 task.wait(0.1)
                 continue
             end
 
-            -- enable platform jika perlu
+            -- Enable platform jika perlu
             if not state.platformEnabled then
                 state.platformEnabled = true
                 enablePlatform()
@@ -1479,10 +2779,34 @@ local function startAutoCollectLuckyBlock()
             blockData.attempts += 1
 
             ----------------------------------------------------------------
-            -- STEP 1: START (floor 1)
+            -- STEP 1: START (floor 1) - PASTIKAN KARAKTER DI START
             ----------------------------------------------------------------
-            tweenToFloor(state.Floors[1], true)
-            task.wait(0.15)
+            local maxRetry = 3
+            local retryCount = 0
+            local startReached = false
+            while retryCount < maxRetry and not startReached do
+                retryCount = retryCount + 1
+                tweenToFloor(state.Floors[1], true)
+                task.wait(0.3)  -- beri waktu tween bekerja
+                local hrpNow = getRoot()
+                if hrpNow then
+                    local distX = math.abs(hrpNow.Position.X - state.Floors[1].x)
+                    if distX <= 8 then
+                        startReached = true
+                    end
+                end
+            end
+            if not startReached then
+                -- fallback: teleport paksa
+                local hrp = getRoot()
+                if hrp then
+                    local basePos = getBasePositionForFloor(state.Floors[1])
+                    if basePos then
+                        pcall(function() hrp.CFrame = CFrame.new(basePos) end)
+                    end
+                end
+                task.wait(0.2)
+            end
 
             ----------------------------------------------------------------
             -- STEP 2: SAFE POS (SEJAJAR DENGAN BLOCK)
@@ -1523,9 +2847,18 @@ local function startAutoCollectLuckyBlock()
             task.wait(0.08)
 
             ----------------------------------------------------------------
-            -- STEP 5: BALIK KE START
+            -- STEP 5: BALIK KE START - PASTIKAN KEMBALI KE START
             ----------------------------------------------------------------
             tweenToFloor(state.Floors[1], true)
+            -- Tunggu hingga karakter benar-benar kembali ke start
+            local waitBackTime = tick()
+            local waitBackHrp = getRoot()
+            local waitBackTargetX = state.Floors[1].x
+            local waitBackTolerance = 5
+            while waitBackHrp and (math.abs(waitBackHrp.Position.X - waitBackTargetX) > waitBackTolerance) and (tick() - waitBackTime < 3) do
+                task.wait(0.05)
+                waitBackHrp = getRoot()
+            end
             task.wait(0.15)
 
             ----------------------------------------------------------------
@@ -1548,6 +2881,19 @@ local function startAutoCollectLuckyBlock()
     end)
 end
 
+-- Tambahkan fungsi ini setelah fungsi refreshLuckyBlockQueueForTargets
+local function refreshTargetQueueForAutoCollect()
+    if not state.AutoCollectTarget then return end
+    
+    -- Refresh lucky block queue
+    refreshLuckyBlockQueueForTargets()
+    enqueueExistingLuckyBlocks()
+    sortLuckyBlockQueue()
+    
+    -- Beri notifikasi
+    state.WindUI:Notify({ Title = "Target", Content = "Updated.", Duration = 2 })
+end
+
 ------------------------------------------------------
 -- AUTO COLLECT TARGET (BLOCK > BRAINROT)
 ------------------------------------------------------
@@ -1567,12 +2913,10 @@ local function stopAutoCollectTarget()
     -- Hentikan scanner
     stopRealtimeScanner()
 
-    -- Lepaskan listener Lucky Block JIKA tidak ada sistem lain yang membutuhkan
-    if not state.autoCollectBlockEnabled then
-        detachLuckyBlockWatcher()
-    end
+    -- Lepaskan listener
+    detachLuckyBlockWatcher()
 
-    -- Kosongkan semua queue dan cache
+    -- Kosongkan queue dan cache
     state.LuckyBlockQueue = {}
     state.LuckyBlockSeen = {}
     state.brainrotCache = {}
@@ -1582,7 +2926,7 @@ local function stopAutoCollectTarget()
     state.pendingRestartCollectRarity = false
     state.pendingRestartCollectTarget = false
 
-    -- Reset state sub-sistem
+    -- 🔥 FORCE RESET FLAG (tambahan)
     state.autoCollectBlockEnabled = false
     state.autoCollectEnabled = false
 
@@ -1604,6 +2948,73 @@ local function detachLuckyBlockWatcher()
     end
 end
 
+-- =============================================
+-- FUNGSI TAMBAHAN UNTUK REFRESH QUEUE
+-- =============================================
+local function refreshLuckyBlockQueueForTargets()
+    -- Jika targets kosong => artinya semua diizinkan
+    if next(state.LuckyBlockTargets) == nil then 
+        -- Kosongkan queue jika sebelumnya ada target
+        if #state.LuckyBlockQueue > 0 then
+            state.LuckyBlockQueue = {}
+            state.LuckyBlockSeen = {}
+            enqueueExistingLuckyBlocks()
+        end
+        return 
+    end
+    
+    -- Hapus items yang tidak match targets
+    local removedCount = 0
+    for i = #state.LuckyBlockQueue, 1, -1 do
+        local it = state.LuckyBlockQueue[i]
+        if it and it.blockType then
+            if not state.LuckyBlockTargets[it.blockType] then
+                -- Hapus dari seen dan queue
+                if it.model then
+                    state.LuckyBlockSeen[it.model] = nil
+                end
+                table.remove(state.LuckyBlockQueue, i)
+                removedCount = removedCount + 1
+            end
+        end
+    end
+    
+    -- Tambahkan items yang sesuai target dari existing blocks
+    local addedCount = 0
+    local root = Workspace:FindFirstChild("ActiveLuckyBlocks")
+    if root then
+        for _, lb in ipairs(root:GetChildren()) do
+            if lb and lb.Parent and not state.LuckyBlockSeen[lb] then
+                local ok, pivotPos = pcall(function() return safeGetPivotPosition(lb) end)
+                if ok and pivotPos then
+                    local blockType = safeGetAttr(lb, "LuckyBlockType")
+                    if blockType and state.LuckyBlockTargets[blockType] then
+                        state.LuckyBlockSeen[lb] = true
+                        table.insert(state.LuckyBlockQueue, {
+                            model = lb,
+                            pos = pivotPos,
+                            spawnedFloor = trim(safeGetAttr(lb, "SpawnedFloor") or ""),
+                            blockType = blockType,
+                            attempts = 0,
+                            lastTry = 0,
+                            queuedAt = tick()
+                        })
+                        addedCount = addedCount + 1
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Sort queue setelah perubahan
+    sortLuckyBlockQueue()
+    
+    if state.DEBUG_LUCKY then
+        print(string.format("[Refresh Queue] Removed: %d, Added: %d, Total: %d", 
+            removedCount, addedCount, #state.LuckyBlockQueue))
+    end
+end
+
 local function startAutoCollectTarget()
     -- cegah double task
     if state.autoCollectTargetTask then return end
@@ -1618,20 +3029,12 @@ local function startAutoCollectTarget()
     -- VALIDASI TARGET
     -- ===============================
     if next(state.selectedRarities) == nil and next(state.LuckyBlockTargets) == nil then
-        state.WindUI:Notify({
-            Title = "Error",
-            Content = "Pilih minimal 1 Target Lucky Block atau Brainrot!",
-            Duration = 3
-        })
+        state.WindUI:Notify({ Title = "Error", Content = "Select at least one target.", Duration = 3 })
         return
     end
 
     if not state.platformEnabled then
-        state.WindUI:Notify({
-            Title = "Error",
-            Content = "Platform Builder harus aktif!",
-            Duration = 3
-        })
+        state.WindUI:Notify({ Title = "Error", Content = "Platform must be enabled.", Duration = 3 })
         return
     end
 
@@ -1647,59 +3050,218 @@ local function startAutoCollectTarget()
     -- ===============================
     state.AutoCollectTarget = true
 
+    -- 🔥 TRACKING STATE UNTUK SMART PAUSE/RESUME
+    local lastActiveState = false  -- track apakah ada target aktif di loop sebelumnya
+
+    -- Inisialisasi hash untuk tracking perubahan target
+    state.lastLuckyTargetsHash = game:GetService("HttpService"):JSONEncode(state.LuckyBlockTargets)
+    state.lastBrainrotTargetsHash = game:GetService("HttpService"):JSONEncode(state.selectedRarities)
+
+    -- Start scanner SEBELUM loop (tunggu sampai siap)
     if not state.scannerEnabled then
         startRealtimeScanner()
-        task.wait(0.3)
+        task.wait(0.5)  -- 🔥 PENTING: tunggu scanner sempat scan
     end
 
     enqueueExistingLuckyBlocks()
     attachActiveLuckyBlocksWatcher()
 
     -- ===============================
-    -- CONTROLLER TASK
+    -- CONTROLLER TASK (FIXED ANTI-SPAM)
     -- ===============================
     state.autoCollectTargetTask = task.spawn(function()
         while state.AutoCollectTarget do
-            -- ===============================
-            -- PRIORITAS 1: LUCKY BLOCK
-            -- ===============================
-            if #state.LuckyBlockQueue > 0 then
-                if not state.autoCollectBlockEnabled then
-                    -- hentikan brainrot saja
-                    stopAutoCollect()
+            -- =============================================
+            -- DETEKSI PERUBAHAN TARGET (REALTIME MONITOR)
+            -- =============================================
+            local okA, currentLuckyHash = pcall(function() return HttpService:JSONEncode(state.LuckyBlockTargets) end)
+            local okB, currentBrainrotHash = pcall(function() return HttpService:JSONEncode(state.selectedRarities) end)
+            currentLuckyHash = okA and currentLuckyHash or ""
+            currentBrainrotHash = okB and currentBrainrotHash or ""
 
+            -- Jika ada perubahan pada target Lucky Block
+            if currentLuckyHash ~= state.lastLuckyTargetsHash then
+                state.lastLuckyTargetsHash = currentLuckyHash
+                refreshLuckyBlockQueueForTargets()
+                if state.autoCollectBlockEnabled then
+                    stopAutoCollectLuckyBlock()
+                    task.wait(0.08)
+                    if #state.LuckyBlockQueue > 0 then
+                        state.autoCollectBlockEnabled = true
+                        startAutoCollectLuckyBlock()
+                    else
+                        state.autoCollectBlockEnabled = false
+                    end
+                end
+                if state.WindUI then state.WindUI:Notify({ Title = "Lucky Block", Content = "Updated.", Duration = 2 }) end
+            end
+
+            -- Jika ada perubahan pada target Brainrot
+            if currentBrainrotHash ~= state.lastBrainrotTargetsHash then
+                state.lastBrainrotTargetsHash = currentBrainrotHash
+                if state.autoCollectEnabled then
+                    stopAutoCollect()
+                    task.wait(0.08)
+                    if next(state.selectedRarities) ~= nil then
+                        state.autoCollectEnabled = true
+                        startAutoCollectBrainrotByRarity()
+                    else
+                        state.autoCollectEnabled = false
+                    end
+                end
+                if state.WindUI then state.WindUI:Notify({ Title = "Brainrot", Content = "Target updated.", Duration = 2 }) end
+            end
+
+            -- =============================================
+            -- 🔥 CEK APAKAH ADA TARGET AKTIF (REAL CHECK)
+            -- =============================================
+            local hasActiveNow = false
+
+            -- Cek Lucky Block Queue
+            if #state.LuckyBlockQueue > 0 then
+                hasActiveNow = true
+            end
+
+            -- Cek Brainrot Cache (HARUS ADA BRAINROT NYATA, BUKAN HANYA selectedRarities)
+            if next(state.selectedRarities) ~= nil then
+                for rarity, list in pairs(state.brainrotCache or {}) do
+                    if state.selectedRarities[rarity] and list and #list > 0 then
+                        hasActiveNow = true
+                        break
+                    end
+                end
+            end
+
+            -- =============================================
+            -- 🔥 SMART PAUSE/RESUME (ANTI-SPAM)
+            -- =============================================
+            if hasActiveNow and not lastActiveState then
+                -- 🔴 TRANSITION: IDLE → ACTIVE (ada target baru)
+                if DEBUG then print("[AutoCollectTarget] Target detected -> pausing AutoTravel") end
+                
+                if state.AutoTravelEnabled and not state._autoTravelPaused then
+                    state._autoTravelPausedByCollector = true
+                    pauseAutoTravel()
+                    ensureReturnToStart(4)
+                    task.wait(0.35)
+                end
+                
+                lastActiveState = true
+
+            elseif not hasActiveNow and lastActiveState then
+                -- 🟢 TRANSITION: ACTIVE → IDLE (target habis)
+                if DEBUG then print("[AutoCollectTarget] No targets -> resuming AutoTravel") end
+                
+                if state._autoTravelPausedByCollector and state.AutoTravelEnabled then
+                    state._autoTravelPausedByCollector = false
+                    resumeAutoTravel()
+                end
+                
+                lastActiveState = false
+            end
+            -- ⚪ NO TRANSITION: state sama → tidak perlu pause/resume lagi
+
+            -- =============================================
+            -- LOGIKA PRIORITAS UTAMA (Lucky Block > Brainrot)
+            -- =============================================
+            if #state.LuckyBlockQueue > 0 then
+                -- Start lucky collector jika belum jalan
+                if not state.autoCollectBlockEnabled then
+                    stopAutoCollect()
                     state.autoCollectBlockEnabled = true
                     startAutoCollectLuckyBlock()
                 end
+                task.wait(0.25)
+                continue
 
-            -- ===============================
-            -- PRIORITAS 2: BRAINROT
-            -- ===============================
             elseif next(state.selectedRarities) ~= nil then
-                if not state.autoCollectEnabled then
-                    stopAutoCollectLuckyBlock()
-
-                    state.autoCollectEnabled = true
-                    startAutoCollectBrainrotByRarity()
+                -- Cek apakah ada brainrot nyata
+                local hasBrainrotFound = false
+                for rarity, list in pairs(state.brainrotCache or {}) do
+                    if state.selectedRarities[rarity] and list and #list > 0 then
+                        hasBrainrotFound = true
+                        break
+                    end
                 end
 
+                if hasBrainrotFound then
+                    -- Start brainrot collector jika belum jalan
+                    if not state.autoCollectEnabled then
+                        stopAutoCollectLuckyBlock()
+                        state.autoCollectEnabled = true
+                        startAutoCollectBrainrotByRarity()
+                    end
+                else
+                    -- Tidak ada brainrot nyata -> stop collector
+                    if state.autoCollectEnabled then
+                        stopAutoCollect()
+                    end
+                end
+                
+                task.wait(0.25)
+                continue
+
             else
-                -- tidak ada target sama sekali
+                -- TIDAK ADA TARGET SAMA SEKALI
                 task.wait(0.4)
             end
-
+            
             task.wait(0.25)
-        end
-
-        -- cleanup ketika controller berhenti
+        end  -- ⬅️ INI PENUTUP while state.AutoCollectTarget do
+        
+        -- =============================================
+        -- CLEANUP KETIKA CONTROLLER BERHENTI
+        -- =============================================
+        if DEBUG then print("[AutoCollectTarget] Controller task ending, running cleanup...") end
+        
+        pcall(function()
+            stopAutoCollectLuckyBlock()
+            stopAllAutoCollect()
+            stopRealtimeScanner()
+        end)
+        
         state.autoCollectTargetTask = nil
-    end)
 
-    state.WindUI:Notify({
-        Title = "Auto Collect Target",
-        Content = "Prioritas: Lucky Block → Brainrot",
-        Duration = 3
-    })
+        -- 🔥 FORCE RESUME AUTO TRAVEL (CRITICAL FIX)
+        -- Pastikan AutoTravel resume bahkan kalau ada respawn
+        if state._autoTravelPausedByCollector then
+            if DEBUG then print("[AutoCollectTarget] Force resuming AutoTravel on cleanup") end
+            state._autoTravelPausedByCollector = false
+            state._autoTravelPaused = false
+            
+            -- Tunggu sedikit kalau karakter baru respawn
+            task.wait(0.5)
+            
+            if state.AutoTravelEnabled and not state.autoTravelTask then
+                pcall(startAutoTravel)
+            end
+        end
+    end)
+    
+    state.WindUI:Notify({ Title = "Auto Collect", Content = "Active.", Duration = 3 })
+end
+
+-- =============================================
+-- UPDATE DROPDOWN CALLBACK (DI TAB RUN)
+-- =============================================
+-- Di dalam RunTab, pastikan dropdown Target Lucky Block memiliki callback ini:
+-- (Tambahkan setelah fungsi startAutoCollectTarget)
+
+local function updateLuckyBlockDropdownCallback(selectedList)
+    state.LuckyBlockTargets = {}
+    for _, v in ipairs(selectedList) do 
+        state.LuckyBlockTargets[tostring(v)] = true 
+    end
+
+    -- Jika Auto Collect Target aktif, refresh queue
+    if state.AutoCollectTarget then
+        -- Hash akan terdeteksi otomatis oleh controller
+        state.WindUI:Notify({ Title = "Target", Content = "Targets will update automatically.", Duration = 2 })
+    -- Jika hanya auto collect lucky block biasa
+    elseif state.autoCollectBlockEnabled then
+        refreshLuckyBlockQueueForTargets()
+        state.WindUI:Notify({ Title = "Lucky Block", Content = "Targets updated and ready.", Duration = 2 })
+    end
 end
 
 -- remove map walls / build platform
@@ -1741,11 +3303,32 @@ local function removePartsAbovePlatform()
     local minX = math.min(state.START_POS.X, state.END_POS.X)
     local maxX = math.max(state.START_POS.X, state.END_POS.X)
     local zPad = state.PLATFORM_WIDTH_Z/2 + 10
-    for _,v in ipairs(Workspace:GetDescendants()) do
+
+    -- Ambil karakter pemain dan semua descendant-nya
+    local character = LocalPlayer.Character
+    local playerParts = {}
+    if character then
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                playerParts[part] = true
+            end
+        end
+    end
+
+    for _, v in ipairs(Workspace:GetDescendants()) do
         if v:IsA("BasePart") then
-            if table.find(state.platformParts,v) or table.find(state.wallParts,v) then continue end
+            -- Lewati part milik platform/wall
+            if table.find(state.platformParts, v) or table.find(state.wallParts, v) then
+                continue
+            end
+
+            -- ❗ LEWATI PART MILIK KARAKTER PEMAIN
+            if playerParts[v] then
+                continue
+            end
+
             local p = v.Position
-            if p.X>=minX and p.X<=maxX and math.abs(p.Z-state.START_POS.Z)<=zPad and p.Y>topY then
+            if p.X >= minX and p.X <= maxX and math.abs(p.Z - state.START_POS.Z) <= zPad and p.Y > topY then
                 pcall(function() v:Destroy() end)
             end
         end
@@ -1773,18 +3356,92 @@ local function disableVIP_PB()
     end
 end
 
+-- Fungsi untuk menghapus part VIP/VIP_PLUS/Wall
+-- ====================================================================
+-- UPDATED: removeVIPAndWalls (now also deletes Wall & RightWalls in OG)
+-- ====================================================================
+local function removeVIPAndWalls()
+    for _, v in ipairs(Workspace:GetDescendants()) do
+        -- 1) Hapus VIP dan VIP_PLUS di dalam VIPWalls
+        if v:IsA("BasePart") and v.Parent and v.Parent.Name == "VIPWalls" and (v.Name == "VIP" or v.Name == "VIP_PLUS") then
+            pcall(function() v:Destroy() end)
+        
+        -- 2) Hapus Wall (Model) di dalam Walls
+        elseif v:IsA("Model") and v.Parent and v.Parent.Name == "Walls" and v.Name == "Wall" then
+            pcall(function() v:Destroy() end)
+        
+        -- 3) Hapus semua model di dalam RightWalls (RightWall1 .. RightWall7)
+        elseif v:IsA("Model") and v.Parent and v.Parent.Name == "RightWalls" then
+            pcall(function() v:Destroy() end)
+        
+        -- 4) Hapus model Wall dan RightWall* yang berada di folder OG
+        elseif v:IsA("Model") and v.Parent and v.Parent.Name == "OG" then
+            local name = v.Name
+            -- Hapus jika namanya "Wall" atau diawali "RightWall" diikuti angka
+            if name == "Wall" or name:match("^RightWall[0-9]+$") then
+                pcall(function() v:Destroy() end)
+            end
+        end
+    end
+end
+
+-- Fungsi untuk memulai listener VIP/Wall
+-- ====================================================================
+-- UPDATED: startVIPWallListener (now also removes OG Wall & RightWalls)
+-- ====================================================================
+local function startVIPWallListener()
+    if state.vipWallListenerConn then return end
+
+    state.vipWallListenerConn = Workspace.DescendantAdded:Connect(function(descendant)
+        -- 1) Hapus VIP/VIP_PLUS baru di VIPWalls
+        if descendant:IsA("BasePart") and descendant.Parent and descendant.Parent.Name == "VIPWalls"
+           and (descendant.Name == "VIP" or descendant.Name == "VIP_PLUS") then
+            pcall(function() descendant:Destroy() end)
+        
+        -- 2) Hapus Wall (Model) baru di Walls
+        elseif descendant:IsA("Model") and descendant.Parent and descendant.Parent.Name == "Walls"
+               and descendant.Name == "Wall" then
+            pcall(function() descendant:Destroy() end)
+        
+        -- 3) Hapus semua model baru di RightWalls
+        elseif descendant:IsA("Model") and descendant.Parent and descendant.Parent.Name == "RightWalls" then
+            pcall(function() descendant:Destroy() end)
+        
+        -- 4) Hapus model Wall dan RightWall* baru yang muncul di OG
+        elseif descendant:IsA("Model") and descendant.Parent and descendant.Parent.Name == "OG" then
+            local name = descendant.Name
+            if name == "Wall" or name:match("^RightWall[0-9]+$") then
+                pcall(function() descendant:Destroy() end)
+            end
+        end
+    end)
+end
+
+-- Fungsi untuk menghentikan listener VIP/Wall
+local function stopVIPWallListener()
+    if state.vipWallListenerConn then
+        state.vipWallListenerConn:Disconnect()
+        state.vipWallListenerConn = nil
+    end
+end
+
 local function enablePlatform()
     if not getRoot() then print("[ERROR] enablePlatform: No character found"); return end
     clearClientParts()
     removeMapWalls()
+    
+    -- Hapus VIP/Wall/RightWalls yang ada dan mulai listener
+    removeVIPAndWalls()       -- <-- sekarang sudah hapus RightWalls juga
+    startVIPWallListener()    -- <-- sekarang sudah delete RightWalls otomatis
+    
     buildPlatform()
     removePartsAbovePlatform()
-    enableVIP_PB()
 end
 
 local function disablePlatform()
     clearClientParts()
     disableVIP_PB()
+    stopVIPWallListener()
 end
 
 -- respawn / tween cancel handling (platform builder)
@@ -1792,20 +3449,31 @@ local function onCharacterDied_PB()
     local isForceDeath = state.platformBooting
     cancelLastTween()
 
-    -- SIMPAN STATE UNTUK RESTART (TAMBAHKAN INI)
+    -- SIMPAN STATE UNTUK RESTART
     state.pendingRestartMove = state.autoMoveEnabled
     state.pendingRestartCollectRarity = state.autoCollectEnabled
     state.pendingRestartCollect = state.autoCollectEnabled
     state.pendingRestartCollectBlock = state.autoCollectBlockEnabled
-    state.pendingRestartCollectTarget = state.AutoCollectTarget  -- <- BARIS BARU
+    state.pendingRestartCollectTarget = state.AutoCollectTarget
+    -- 🔥 TAMBAHAN UNTUK AUTO TRAVEL
+    state.pendingRestartTravel = state.AutoTravelEnabled
+
+    state._autoTravelPausedByCollector = state._autoTravelPausedByCollector or false
+    state._autoTravelPaused = state._autoTravelPaused or false
 
     -- Cancel semua task
-    if state.autoMoveTask then task.cancel(state.autoMoveTask); state.autoMoveTask=nil end
-    if state.autoCollectTask then task.cancel(state.autoCollectTask); state.autoCollectTask=nil end
-    if state.autoCollectBlockTask then task.cancel(state.autoCollectBlockTask); state.autoCollectBlockTask=nil end
-    if state.autoCollectTargetTask then task.cancel(state.autoCollectTargetTask); state.autoCollectTargetTask=nil end  -- <- BARIS BARU
+    if state.autoMoveTask then task.cancel(state.autoMoveTask); state.autoMoveTask = nil end
+    if state.autoCollectTask then task.cancel(state.autoCollectTask); state.autoCollectTask = nil end
+    if state.autoCollectBlockTask then task.cancel(state.autoCollectBlockTask); state.autoCollectBlockTask = nil end
+    if state.autoCollectTargetTask then task.cancel(state.autoCollectTargetTask); state.autoCollectTargetTask = nil end
+    -- 🔥 TAMBAHAN UNTUK AUTO TRAVEL
+    -- guard: jika task sudah jalan, jangan cancel & restart — cukup return
+    if state.autoTravelTask then
+        if DEBUG then print("[AutoTravel] Task already running, ignoring start request") end
+        return
+    end
 
-    ---print("[DEATH] Character died. Saved states for restart.")
+    --print("[DEATH] Character died. Saved states for restart.")
 end
 
 local function onCharacterAdded_PB(char)
@@ -1887,11 +3555,7 @@ local function onCharacterAdded_PB(char)
             state.autoCollectTargetTask = nil
         end)
         
-        state.WindUI:Notify({
-            Title = "Auto Collect Target",
-            Content = "Restarted after respawn",
-            Duration = 2
-        })
+        --state.WindUI:Notify({ Title = "Auto Collect", Content = "Resumed after respawn.", Duration = 2 })
         
     --------------------------------------------------
     -- FALLBACK: Restart sistem lama (jika tidak pakai Auto Collect Target)
@@ -1933,6 +3597,52 @@ local function onCharacterAdded_PB(char)
     end
 
     --------------------------------------------------
+    -- 🔥 RESTART AUTO TRAVEL (FIXED)
+    --------------------------------------------------
+    if state.pendingRestartTravel then
+        state.pendingRestartTravel = false
+        
+        if DEBUG then print("[AutoTravel][Respawn] Attempting to restart AutoTravel...") end
+        
+        task.wait(1.2)  -- tunggu platform & karakter stabil
+        state.AutoTravelEnabled = true
+        
+        -- 🔥 CRITICAL FIX: Cek apakah collector benar-benar punya target
+        local actuallyHasTargets = false
+        if state.AutoCollectTarget then
+            -- Cek lucky block queue
+            if #state.LuckyBlockQueue > 0 then
+                actuallyHasTargets = true
+            end
+            
+            -- Cek brainrot cache (harus ada brainrot nyata)
+            if next(state.selectedRarities) ~= nil then
+                for rarity, list in pairs(state.brainrotCache or {}) do
+                    if state.selectedRarities[rarity] and list and #list > 0 then
+                        actuallyHasTargets = true
+                        break
+                    end
+                end
+            end
+        end
+        
+        -- Kalau collector pause tapi TIDAK ADA target nyata -> force resume
+        if state._autoTravelPausedByCollector and not actuallyHasTargets then
+            if DEBUG then print("[AutoTravel][Respawn] Collector idle, force resuming AutoTravel") end
+            state._autoTravelPausedByCollector = false
+            state._autoTravelPaused = false
+        end
+        
+        -- Start AutoTravel jika tidak di-pause oleh collector (atau collector idle)
+        if state._autoTravelPausedByCollector then
+            if DEBUG then print("[AutoTravel][Respawn] Suppressed by active collector") end
+        else
+            if DEBUG then print("[AutoTravel][Respawn] Starting AutoTravel task") end
+            pcall(startAutoTravel)
+        end
+    end
+
+    --------------------------------------------------
     -- SAFETY RESET
     --------------------------------------------------
     state.isTweening = false
@@ -1969,6 +3679,7 @@ end
 --------------------------------------------------------------------------------
 -- UI WINDOW (MAIN Hub) - WindUI usage kept as original
 --------------------------------------------------------------------------------
+-- UI WINDOW (MAIN Hub) - WindUI (wrapped toggles + UI refs)
 local Window = state.WindUI:CreateWindow({
     Title="HexaCore | HUB",
     Icon="gamepad-2",
@@ -1993,101 +3704,187 @@ local Window = state.WindUI:CreateWindow({
 })
 
 -- INFORMATION TAB
-local infoTab=Window:Tab({Title="Information",Icon="info"})
-infoTab:Paragraph({Title="Welcome To HexaCore Hub Official",Desc="Youtube Official : Hexacore-OFFICIAL"})
-infoTab:Button({Title="Copy Discord Link",Callback=function() if setclipboard then setclipboard("https://discord.gg/Wcfqwy6Mdn") end end})
-infoTab:Keybind({Title="HexaCore Keybind",Value="p",Callback=function(v) Window:SetToggleKey(Enum.KeyCode[v]) end})
+local infoTab = Window:Tab({ Title = "Information", Icon = "info" })
+infoTab:Paragraph({ Title = "Welcome To HexaCore Hub Official", Desc = "Youtube Official : Hexacore-OFFICIAL" })
+infoTab:Button({ Title = "Copy Discord Link", Callback = function() if setclipboard then setclipboard("https://discord.gg/Wcfqwy6Mdn") end end })
+infoTab:Keybind({ Title = "HexaCore Keybind", Value = "p", Callback = function(v) Window:SetToggleKey(Enum.KeyCode[v]) end })
 
 -- MAIN TAB
-local MainTab=Window:Tab({Title="Main",Icon="settings-2"})
+local MainTab = Window:Tab({ Title = "Main", Icon = "settings-2" })
 MainTab:Section({ Title = "Automation" })
-MainTab:Toggle({Title="Auto Collect",Callback=function(v) state.AutoCollect=v SnapshotUUIDsOnce() end})
-MainTab:Toggle({Title="Auto Upgrade",Callback=function(v) state.AutoUpgrade=v SnapshotUUIDsOnce() end})
-MainTab:Toggle({Title="Auto Buy Speed",Callback=function(v) state.AutoBuySpeed=v end})
-MainTab:Toggle({Title="Auto Rebirth",Callback=function(v) state.AutoRebirth=v end})
-MainTab:Toggle({Title="Auto Buy Carry",Callback=function(v) state.AutoBuyCarry=v end})
-MainTab:Toggle({Title = "No Clip (Tembus Semua)", Callback = function(v) if v then enableNoClip() else disableNoClip() end end})
+
+-- Auto Collect (wrapped)
+createToggle(MainTab, {
+    Title = "Auto Collect",
+    Default = true,
+    Callback = function(v)
+        state.AutoCollect = v
+        SnapshotUUIDsOnce()
+        if v then
+            state.autoCollectEnabled = true
+            if next(state.selectedRarities) ~= nil then
+                pcall(startAutoCollectBrainrotByRarity)
+            end
+        else
+            pcall(stopAllAutoCollect)
+            state.autoCollectEnabled = false
+        end
+    end
+}, "AutoCollect")
+
+-- Other automation toggles
+createToggle(MainTab, { Title = "Auto Upgrade", Callback = function(v) state.AutoUpgrade = v; SnapshotUUIDsOnce() end }, "AutoUpgrade")
+createToggle(MainTab, { Title = "Auto Buy Speed", Callback = function(v) state.AutoBuySpeed = v end }, "AutoBuySpeed")
+createToggle(MainTab, { Title = "Auto Rebirth", Callback = function(v) state.AutoRebirth = v end }, "AutoRebirth")
+createToggle(MainTab, { Title = "Auto Buy Carry", Callback = function(v) state.AutoBuyCarry = v end }, "AutoBuyCarry")
+
+-- No Clip (kept original behavior, but still store ref)
+createToggle(MainTab, {
+    Title = "No Clip",
+    Callback = function(v)
+        state.NoClipEnabled = v
+        if v then enableNoClip() else disableNoClip() end
+    end
+}, "NoClipEnabled")
 
 -- RUN TAB
-local RunTab=Window:Tab({Title="Run",Icon="activity"})
+local RunTab = Window:Tab({ Title = "Run", Icon = "activity" })
 RunTab:Section({ Title = "Premium Bypass" })
-RunTab:Toggle({ Title = "Bypass VIP", Callback = function(v)
-    if v then enableSelectiveNoClip(); enableVIPWallTouchBlock() else disableSelectiveNoClip(); disableVIPWallTouchBlock() end
-end })
 
-RunTab:Toggle({ Title = "Auto Obby Gold", Default = false, Callback = function(v)
-    if v then
-        stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
-        state.AutoObbyGoldEnabled = true
-        setupObbyListener()
-        state.WindUI:Notify({ Title = "Obby Gold", Content = "Starting Auto Obby Gold sequence...", Duration = 2 })
-        task.wait(0.5); startObbyGoldSequence()
-    else
-        stopObbyGold()
+-- Bypass VIP (set state.BypassVIP supaya tersave)
+createToggle(RunTab, {
+    Title = "Bypass VIP",
+    Callback = function(v)
+        state.BypassVIP = v
+        -- juga set selective no-clip state (mirror)
+        state.SelectiveNoClipEnabled = v
+        if v then
+            enableSelectiveNoClip()
+            enableVIPWallTouchBlock()
+        else
+            disableSelectiveNoClip()
+            disableVIPWallTouchBlock()
+        end
     end
-end })
+}, "BypassVIP")
+
+createToggle(RunTab, {
+    Title = "Auto Obby Gold",
+    Default = false,
+    Callback = function(v)
+        state.AutoObbyGoldEnabled = v
+        if v then
+            stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
+            setupObbyListener()
+            state.WindUI:Notify({ Title = "Obby Gold", Content = "Starting Auto Obby Gold sequence...", Duration = 2 })
+            task.wait(0.5); pcall(startObbyGoldSequence)
+        else
+            pcall(stopObbyGold)
+        end
+    end
+}, "AutoObbyGoldEnabled")
 
 RunTab:Section({ Title = "Platform Builder" })
-RunTab:Toggle({ Title = "Platform Builder", Description = "ON = Build Platform | OFF = Remove Platform", Callback = function(v)
-    state.platformEnabled = v
-    if v then
-        state.platformBooting = true
-        stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
-        if not getRoot() then waitCharacterReady(); task.wait(1) end
-        local success = pcall(function() tweenToFloor(state.Floors[1], true) end)
-        if not success then state.WindUI:Notify({ Title = "Tween Gagal", Content = "Gagal pindah ke start, mencoba lagi...", Duration = 2 }); task.wait(0.5); tweenToFloor(state.Floors[1], true) end
-        task.wait(0.8)
-        enablePlatform()
-        state.platformBooting = false
-        state.WindUI:Notify({ Title = "Platform Ready", Content = "Platform & VIP telah aktif", Duration = 2 })
-    else
-        stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
-        disablePlatform()
-        state.WindUI:Notify({ Title = "Platform Dimatikan", Content = "Platform & VIP telah dihapus", Duration = 2 })
+createToggle(RunTab, {
+    Title = "Platform Builder",
+    Description = "ON = Build Platform | OFF = Remove Platform",
+    Callback = function(v)
+        state.platformEnabled = v
+        if v then
+            state.platformBooting = true
+            stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
+            if not getRoot() then waitCharacterReady(); task.wait(1) end
+            local success = pcall(function() tweenToFloor(state.Floors[1], true) end)
+            if not success then
+                state.WindUI:Notify({ Title = "Movement", Content = "Move failed, retrying...", Duration = 2 })
+                task.wait(0.5); pcall(function() tweenToFloor(state.Floors[1], true) end)
+            end
+            task.wait(0.8)
+            pcall(enablePlatform)
+            state.platformBooting = false
+            state.WindUI:Notify({ Title = "Platform", Content = "Platform is ready.", Duration = 2 })
+        else
+            stopAutoMove(); stopAutoCollect(); stopAutoCollectLuckyBlock()
+            pcall(disablePlatform)
+            state.WindUI:Notify({ Title = "Platform", Content = "Platform disabled.", Duration = 2 })
+        end
     end
-end })
+}, "platformEnabled")
 
-RunTab:Slider({ Title = "Wall Safe Distance (positive => lebih ke dalam pijakan)", Value = { Min = -6, Max = 6, Default = state.WALL_SAFE_DISTANCE, Step = 0.1 }, Callback = function(v) state.WALL_SAFE_DISTANCE = v end })
-RunTab:Slider({ Title = "Tween Speed (higher = faster)", Value = { Min = 100, Max = 1200, Default = state.TWEEN_SPEED, Step = 10 }, Callback = function(v) state.TWEEN_SPEED = v end })
+-- Tween Speed slider (kept)
+RunTab:Slider({ Title = "Tween Speed", Value = { Min = 100, Max = 1200, Default = state.TWEEN_SPEED, Step = 10 }, Callback = function(v) state.TWEEN_SPEED = v end })
+
+state.selectedRarities = {
+    Infinity = true,
+    Divine   = true
+}
+
+state.LuckyBlockTargets = {
+    Admin       = true,
+    Divine      = true,
+    Celestial   = true,
+    Gamer       = true,
+    Radioactive = true,
+    Void        = true,
+    UFO         = true,
+    Alien       = true,
+    Jackpot     = true,
+    Money       = true
+}
 
 -- Floor Navigation
-RunTab:Section({ Title = "Floor Navigation" })
-RunTab:Dropdown({ Title = "Target Brainrot", Values = state.BRAINROT_PRIORITY_ORDER, Multi = true, Default = {}, Callback = function(selectedList)
-    state.selectedRarities = {}
-    for _, rarity in ipairs(selectedList) do state.selectedRarities[rarity] = true end
-end })
+RunTab:Section({ Title = "Auto Collect Brainrot / Block" })
+-- =============================================
+-- 2. DROPDOWN TARGET BRAINROT
+-- =============================================
+RunTab:Dropdown({
+    Title = "Target Brainrot",
+    Values = state.BRAINROT_PRIORITY_ORDER,
+    Multi = true,
+    Value = {"Infinity", "Divine"},  -- ✅ PAKAI Value, BUKAN Default
+    Callback = function(selectedList)
+        state.selectedRarities = {}
+        for _, rarity in ipairs(selectedList) do 
+            state.selectedRarities[rarity] = true 
+        end
+    end
+})
 
-RunTab:Dropdown({ 
-    Title = "Target Lucky Block", 
-    Values = state.LUCKY_PRIORITY_ORDER,  -- Menggunakan priority order yang sudah didefinisikan
-    Multi = true, 
-    Default = {}, 
+-- =============================================
+-- 3. DROPDOWN TARGET LUCKY BLOCK
+-- =============================================
+RunTab:Dropdown({
+    Title = "Target Lucky Block",
+    Values = state.LUCKY_PRIORITY_ORDER,
+    Multi = true,
+    Value = {  -- ✅ SESUAI CONTEKAN: Value = table
+        "Admin", "Divine", "Celestial", "Gamer", "Radioactive",
+        "Void", "UFO", "Alien", "Jackpot", "Money"
+    },
     Callback = function(selectedList)
         state.LuckyBlockTargets = {}
         for _, v in ipairs(selectedList) do 
             state.LuckyBlockTargets[tostring(v)] = true 
         end
 
-        -- PATCH: jika auto collect block sedang aktif, refresh queue agar target baru langsung berlaku
-        if state.autoCollectBlockEnabled then
-            -- remove queued items that are no longer allowed
+        if state.AutoCollectTarget then
+            refreshTargetQueueForAutoCollect()
+        elseif state.autoCollectBlockEnabled then
             refreshLuckyBlockQueueForTargets()
-            -- try to enqueue any existing blocks matching new targets
             enqueueExistingLuckyBlocks()
             sortLuckyBlockQueue()
-            state.WindUI:Notify({ 
-                Title = "Lucky Block Targets Updated", 
-                Content = "Target Lucky Block diperbarui dan queue direfresh.", 
-                Duration = 2 
+            state.WindUI:Notify({
+                Title = "Lucky Block",
+                Content = "Targets updated and ready.",
+                Duration = 2
             })
         end
-    end 
+    end
 })
-
 
 RunTab:Slider({ Title = "Jumlah Brainrot per Loop", Description = "Berapa banyak brainrot yang diambil tiap loop (1..6)", Value = { Min = 1, Max = 6, Default = state.BRAINROT_PICK_COUNT, Step = 1 }, Callback = function(v) state.BRAINROT_PICK_COUNT = v end })
 
-RunTab:Toggle({
+createToggle(RunTab, {
     Title = "Auto Collect Target",
     Description = "Prioritas: Lucky Block → Brainrot (movement aman)",
     Default = false,
@@ -2099,8 +3896,7 @@ RunTab:Toggle({
             stopAutoCollectTarget()
         end
     end
-})
-
+}, "AutoCollectTarget")
 
 RunTab:Button({ Title = "⬆ Move Up", Callback = function()
     stopAutoMove(); stopAutoCollect()
@@ -2118,91 +3914,52 @@ RunTab:Button({ Title = "⬇ Move Down", Callback = function()
     if prevFloor then tweenToFloor(prevFloor, false) end
 end })
 
-RunTab:Toggle({ Title = "Auto Move To Target", Description = "Bergerak 1 per 1 floor menuju target (melewati tiap floor)", Default = false, Callback = function(v)
-    if v then stopAutoCollect(); state.autoMoveEnabled = true; startAutoMoveToTarget(state.selectedFloorIndex) else stopAutoMove() end
-end })
+createToggle(RunTab, {
+    Title = "Auto Move To Target",
+    Description = "Bergerak 1 per 1 floor menuju target (melewati tiap floor)",
+    Default = false,
+    Callback = function(v)
+        state.AutoRunEnabled = v
+        if v then
+            stopAutoCollect()
+            state.autoMoveEnabled = true
+            pcall(function() startAutoMoveToTarget(state.selectedFloorIndex) end)
+        else
+            state.autoMoveEnabled = false
+            pcall(stopAutoMove)
+        end
+    end
+}, "AutoRunEnabled")
 
 -- EVENT TAB
-local EventTab=Window:Tab({Title="Event",Icon="radio"})
+local EventTab = Window:Tab({ Title = "Event", Icon = "radio" })
+EventTab:Section({ Title = "Auto Travel" })
+createToggle(EventTab, {
+    Title = "Auto Travel",
+    Description = "Berjalan otomatis dari Start → Common → ... → Celestial → Start (loop). Prioritas lebih rendah dari Auto Collect Target.",
+    Default = false,
+    Callback = function(v)
+        state.AutoTravelEnabled = v
+        if v then
+            startAutoTravel()
+        else
+            stopAutoTravel()
+        end
+    end
+}, "AutoTravelEnabled")
+
 EventTab:Section({ Title = "Event Collect Coins" })
-EventTab:Toggle({Title="Collect Radioactive Coin",Callback=function(v) state.AutoCollectRadioactive = v end})
-EventTab:Toggle({Title="Collect UFO Coin",Callback=function(v) state.AutoCollectUFO = v end})
-EventTab:Toggle({Title = "Collect Gold Bar",Callback = function(v) state.AutoCollectGoldBar = v end})
-EventTab:Toggle({ Title = "Collect Ticket", Callback = function(v) state.AutoCollectTicket = v end })
-EventTab:Toggle({ Title = "Collect Gamer", Callback = function(v) state.AutoCollectGamer = v end })
+
+createToggle(EventTab, { Title = "Collect Radioactive Coin", Callback = function(v) state.AutoCollectRadioactive = v end }, "AutoCollectRadioactive")
+createToggle(EventTab, { Title = "Collect UFO Coin", Callback = function(v) state.AutoCollectUFO = v end }, "AutoCollectUFO")
+createToggle(EventTab, { Title = "Collect Gold Bar", Callback = function(v) state.AutoCollectGoldBar = v end }, "AutoCollectGoldBar")
+createToggle(EventTab, { Title = "Collect Ticket", Callback = function(v) state.AutoCollectTicket = v end }, "AutoCollectTicket")
+createToggle(EventTab, { Title = "Collect Gamer", Callback = function(v) state.AutoCollectGamer = v end }, "AutoCollectGamer")
 
 EventTab:Section({ Title = "Auto Spin Wheel" })
-EventTab:Toggle({Title="Auto Spin Radioactive",Callback=function(v) state.AutoSpinRadioactive=v end})
-EventTab:Toggle({Title="Auto Spin UFO",Callback=function(v) state.AutoSpinUFO=v end})
-EventTab:Toggle({ Title = "Auto Spin Gold Bar", Callback = function(v) state.AutoSpinGoldBar = v end })
-
--- SELL BRAINROT (Sell tab build kept)
--- ... (SellState and sell helpers are kept below unchanged in logic)
-local SellState = {
-    scanResults = {},
-    chosenTypes = {},
-    levelThreshold = 1,
-}
-SellState.BRAINROT_LISTS = {
-    Celestial = { "Diamantusa","Caffe Trinity","Alessio","Job Job Job Sahur","Dug Dug Dug",
-        "Bisonte Giuppitere","Esok Sekolah","Zung Zung Zung Lazur","Avocadini Antilopini",
-        "Los Orcaleritos","Capuccino Policia","Rattini Machini","La Malita","Money Elephant"
-    },
-    Cosmic = { "Darlungini Pandanneli","Vroosh Boosh","Nuclearo Dinossauro","La Grande Combinasion",
-        "Garama and Madundung","Dragon Cannelloni","Chimpanzini Spiderini","Agarrini la Palini",
-        "Las Vaquitas Saturnitas","Graipuss Medussi","Torrtuginni Dragonfrutini",
-        "Los Tralaleritos","La Vacca Saturno Saturnita","Pot Hotspot",
-        "Las Tralaleritas","Chicleteira Bicicleteira"
-    },
-    Epic = { "Blueberrinni Octopussini","Ballerina Cappuccina","Burbaloni Luliloli",
-        "Strawberrelli Flamingelli","Sigma Boy","Pi Pi Watermelon","Pandaccini Bananini",
-        "Lionel Cactuseli","Guesto Angelic","Cocosini Mama","Chef Crabracadabra",
-        "Chimpanzini Bananini","Glorbo Fruttodrillo"
-    },
-    Legendary = { "Eaglucci Cocosucci","Zibra Zubra Zibralini","Tigrilini Watermelini",
-        "Spioniro Golubiro","Rhino Toasterino","Orangutini Ananasini",
-        "Gorillo Watermelondrillo","Ganganzelli Trulala","Frigo Camelo",
-        "Bombombini Gusini","Bombardiro Crocodilo","Avocadorilla","Cavallo Virtuoso"
-    },
-    Mythical = { "Ballerino Lololo","Cocofanto Elefanto","Los Crocodillitos","Piccione Macchina",
-        "Tigroligre Frutonni","Trenostruzzo Turbo 3000",
-        "Trippi Troppi Troppa Trippa","Tukanno Bananno","Udin Din Din Dun",
-        "Orcalero Orcala","Giraffa Celeste","Tralalero Tralala"
-    },
-    Rare = { "Trulimero Trulicina","Ti Ti Ti Sahur","Salamino Penguino",
-        "Perochello Lemonchello","Penguino Cocosino","Cappuccino Assassino",
-        "Bananita Dolphinita","Bambini Crostini","Brr Brr Patapim","Avocadini Guffo"
-    },
-    Secret = { "Bambooini Bombini","Eek Eek Eek Sahur","Rainbow 67",
-        "La Vacca Black Hole Goat","Fragola La La La","Aura Farma",
-        "Los Tungtungtungcitos","Los Combinasionas","Espresso Signora",
-        "Unclito Samito","Gattatino Neonino","Gatattino Donutino",
-        "Statutino Libertino","Capybara Monitora","Tractoro Dinosauro",
-        "Mastodontico Telepiedone","Patatino Astronauta","Matteo",
-        "Patito Dinerito","Onionello Penguini"
-    },
-    Uncommon = { "Trippi Troppi","Tric Tric Baraboom","Ta Ta Ta Sahur","Pipi Avocado",
-        "Gangster Footera","Cacto Hipopotamo","Boneca Ambalabu",
-        "Bobrito Bandito","67"
-    },
-    Common = { "Tim Cheese","Talpa Di Fero","Svinino Bombondino","Pipi Kiwi",
-        "Pipi Corni","Noobini Cakenini","Lirili Larila","Frulli Frulla"
-    },
-    Divine = { "Strawberry Elephant","Burgerini Bearini","Bulbito Bandito Traktorito",
-        "Martino Gravitino","Galactio Fantasma","Din Din Vaultero","Grappellino D'Oro"
-    },
-    Infinity = { "Noobini Infeeny" }
-}
-
-local function buildLookups()
-    SellState.BRAINROT_LOOKUP = {}
-    for rarity, list in pairs(SellState.BRAINROT_LISTS) do
-        local t = {}
-        for _, name in ipairs(list) do t[string.lower(name)] = true end
-        SellState.BRAINROT_LOOKUP[rarity] = t
-    end
-end
-buildLookups()
+createToggle(EventTab, { Title = "Auto Spin Radioactive", Callback = function(v) state.AutoSpinRadioactive = v end }, "AutoSpinRadioactive")
+createToggle(EventTab, { Title = "Auto Spin UFO", Callback = function(v) state.AutoSpinUFO = v end }, "AutoSpinUFO")
+createToggle(EventTab, { Title = "Auto Spin Gold Bar", Callback = function(v) state.AutoSpinGoldBar = v end }, "AutoSpinGoldBar")
 
 local function scanInventory()
     SellState.scanResults = {}
@@ -2274,13 +4031,13 @@ if not hasSellTab then
     local SellTab = Window:Tab({ Title = "Sell Brainrot", Icon = "shopping-bag" })
     SellTab:Section({ Title = "Filter / Sell" })
     SellTab:Dropdown({ Title = "Type Brainrot", Values = { "Common","Uncommon","Rare","Epic","Legendary","Mythical","Cosmic","Secret","Celestial","Divine","Infinity" }, Multi = true, Default = {}, Callback = function(selectedList) SellState.chosenTypes = {}; for _, v in ipairs(selectedList) do SellState.chosenTypes[v] = true end end })
-    SellTab:Input({ Title = "Level (below)", Placeholder = tostring(SellState.levelThreshold), Callback = function(v) local n = tonumber(v); if n and n >= 0 then SellState.levelThreshold = n; state.WindUI:Notify({ Title = "Threshold Set", Content = tostring(n), Duration = 1 }) else state.WindUI:Notify({ Title = "Error", Content = "Masukkan angka valid", Duration = 1 }) end end })
+    SellTab:Input({ Title = "Level (below)", Placeholder = tostring(SellState.levelThreshold), Callback = function(v) local n = tonumber(v); if n and n >= 0 then SellState.levelThreshold = n; state.WindUI:Notify({ Title = "Settings", Content = "Threshold updated.", Duration = 1 }) else state.WindUI:Notify({ Title = "Error", Content = "Please enter a valid number.", Duration = 1 }) end end })
     SellTab:Button({ Title = "Sell Brainrot", Description = "Scan inventory lalu jual semua brainrot yang cocok (type + level below).", Callback = function()
         local found = scanInventory()
-        if found == 0 then state.WindUI:Notify({ Title = "No Items", Content = "Tidak ada item dengan RenderModel di Backpack.", Duration = 2 }); return end
+        if found == 0 then state.WindUI:Notify({ Title = "Inventory", Content = "No items found.", Duration = 2 }) return end
         local matches = collectMatchesFromScan()
-        if #matches == 0 then state.WindUI:Notify({ Title = "No Matches", Content = "Tidak ada brainrot sesuai kriteria.", Duration = 2 }); return end
-        state.WindUI:Notify({ Title = "Selling...", Content = ("Menjual %d brainrot"):format(#matches), Duration = 2 })
+        if #matches == 0 then state.WindUI:Notify({ Title = "Result", Content = "No matching items found.", Duration = 2 }) return end
+        state.WindUI:Notify({ Title = "Selling", Content = ("Selling %d items..."):format(#matches), Duration = 2 })
         local sold = 0
         for _, entry in ipairs(matches) do
             local toolObj = entry.tool
@@ -2292,7 +4049,7 @@ if not hasSellTab then
                 warn("[Sell] tool missing or moved: " .. tostring(entry.tool and entry.tool.Name))
             end
         end
-        state.WindUI:Notify({ Title = "Done", Content = ("Terjual: %d / %d"):format(sold, #matches), Duration = 3 })
+        state.WindUI:Notify({ Title = "Done", Content = string.format("Sold %d of %d items.", sold, #matches), Duration = 3 })
     end })
     SellTab:Section({ Title = "Open Lucky Block" })
     SellTab:Dropdown({ Title = "Type Lucky Block", Values = { "All","Common","Uncommon","Rare","Epic","Legendary","Mythical","Cosmic","Secret","Celestial","Divine","Infinity" }, Multi = true, Default = { "All" }, Callback = function(selected)
@@ -2304,7 +4061,7 @@ if not hasSellTab then
     end })
     SellTab:Button({ Title = "Open Block", Description = "Buka semua Lucky Block di Backpack sesuai Type Lucky Block", Callback = function()
         local bp = Players.LocalPlayer:FindFirstChild("Backpack")
-        if not bp then state.WindUI:Notify({ Title = "Error", Content = "Backpack tidak ditemukan", Duration = 2 }); return end
+        if not bp then state.WindUI:Notify({ Title = "Error", Content = "Backpack not found.", Duration = 2 }) return end
         local opened = 0; local total = 0
         for _, tool in ipairs(bp:GetChildren()) do
             if tool:IsA("Tool") then
@@ -2328,91 +4085,228 @@ if not hasSellTab then
     end })
 end
 
--- MISC TAB
-local MiscTab=Window:Tab({Title="Misc",Icon="sparkles"})
-MiscTab:Section({ Title = "I dont know but i know u need this features" })
-MiscTab:Toggle({Title="Instant Grab",Callback=function(v) if v then enableInstantGrab() else disableInstantGrab() end end})
-MiscTab:Toggle({Title="Infinite Zoom Out",Callback=function(v) if v then enableInfiniteZoom() else disableInfiniteZoom() end end})
-MiscTab:Toggle({Title="Infinite Jump",Callback=function(v) if v then enableInfiniteJump() else disableInfiniteJump() end end})
+-- <<===== ADD AUTO TRADE TAB UI (paste after EventTab creation, before Sell Tab) =====>>
+local AutoTradeTab = Window:Tab({ Title = "Auto Trade", Icon = "repeat" })
+AutoTradeTab:Section({ Title = "Auto Trade Settings" })
 
-------------------------------------------------------
--- COMPLETE CLEANUP FUNCTION
-------------------------------------------------------
-local function cleanupAll()
-    print("[CLEANUP] Starting complete cleanup...")
-    
-    -- 1. Hentikan semua sistem automasi dan task
-    stopObbyGold()
-    stopAutoMove()
-    stopAllAutoCollect()
-    stopAutoCollectLuckyBlock()
-    stopAutoCollectTarget()
-    
-    -- 2. Hentikan scanner
-    stopRealtimeScanner()
-    
-    -- 3. Matikan platform builder
-    if state.platformEnabled then
-        state.platformEnabled = false
-        disablePlatform()
+-- Target Player dropdown (UI element)
+local PlayerDropdown = nil
+PlayerDropdown = AutoTradeTab:Dropdown({
+    Title = "Target Player",
+    Values = getPlayerNames(),
+    Callback = function(name)
+        state.TargetPlayer = Players:FindFirstChild(name)
     end
-    
-    -- 4. Matikan semua fitur instant/misc
-    if state.InstantGrabEnabled then disableInstantGrab() end
-    if state.InfiniteZoomEnabled then disableInfiniteZoom() end
-    if state.InfiniteJumpEnabled then disableInfiniteJump() end
-    if state.NoClipEnabled then disableNoClip() end
-    if state.SelectiveNoClipEnabled then disableSelectiveNoClip() end
-    
-    -- 5. Hentikan semua koneksi event
-    if addConn then addConn:Disconnect(); addConn = nil end
-    if remConn then remConn:Disconnect(); remConn = nil end
-    if state.promptConn then state.promptConn:Disconnect(); state.promptConn = nil end
-    if state.vipNoClipConn then state.vipNoClipConn:Disconnect(); state.vipNoClipConn = nil end
-    if state.vipTouchBlockConn then state.vipTouchBlockConn:Disconnect(); state.vipTouchBlockConn = nil end
-    if state.noClipConn then state.noClipConn:Disconnect(); state.noClipConn = nil end
-    if state.infiniteJumpConn then state.infiniteJumpConn:Disconnect(); state.infiniteJumpConn = nil end
-    if state.humanoidDiedConn then state.humanoidDiedConn:Disconnect(); state.humanoidDiedConn = nil end
-    if state.luckyWatcherConnAdded then state.luckyWatcherConnAdded:Disconnect(); state.luckyWatcherConnAdded = nil end
-    if state.luckyWatcherConnRemoved then state.luckyWatcherConnRemoved:Disconnect(); state.luckyWatcherConnRemoved = nil end
-    if state.workspaceChildAddedConn then state.workspaceChildAddedConn:Disconnect(); state.workspaceChildAddedConn = nil end
-    if obbyListenerConn then obbyListenerConn:Disconnect(); obbyListenerConn = nil end
-    
-    -- 6. Cancel semua tweens
-    cancelLastTween()
-    
-    -- 7. Restore semua prompts yang dimodifikasi
-    restorePrompts()
-    restorePrompts_PB()
-    
-    -- 8. Hapus semua bagian platform yang dibuat
-    clearClientParts()
-    
-    -- 9. Reset semua state ke default (kecuali yang diperlukan untuk restart)
-    for k, _ in pairs(state) do
-        -- Hanya reset flag boolean dan tabel, jangan hapus WindUI
-        if type(state[k]) == "boolean" then
-            state[k] = false
-        elseif type(state[k]) == "table" and k ~= "WindUI" and k ~= "Floors" then
-            state[k] = {}
+})
+
+-- Refresh button (under the dropdown)
+AutoTradeTab:Button({
+    Title = "🔄 Refresh Player List",
+    Callback = function()
+        local names = getPlayerNames()
+
+        if PlayerDropdown then
+            PlayerDropdown:Refresh(names)
         end
     end
-    
-    -- 10. Reset camera zoom
-    pcall(function()
-        LocalPlayer.CameraMinZoomDistance = minZoom
-        LocalPlayer.CameraMaxZoomDistance = maxZoom
-    end)
-    
-    print("[CLEANUP] Complete cleanup finished.")
-end
+})
 
--- CLEANUP ON SCRIPT DISABLE
-Window:OnClose(function()
-    cleanupAll()
-    state.WindUI:Notify({ Title = "HexaCore Hub", Content = "All systems stopped and cleaned up.", Duration = 3 })
+
+-- auto-update when players join/leave (ke UI dropdown)
+Players.PlayerAdded:Connect(function()
+    if PlayerDropdown and PlayerDropdown.SetValues then PlayerDropdown:SetValues(getPlayerNames()) end
+end)
+Players.PlayerRemoving:Connect(function()
+    if PlayerDropdown and PlayerDropdown.SetValues then PlayerDropdown:SetValues(getPlayerNames()) end
+end)
+
+-- Brainrot filter
+AutoTradeTab:Dropdown({
+    Title = "Brainrot Rarity Filter",
+    Description = "Multi-select (empty = ignore brainrots)",
+    Values = state.RARITIES or { "Common","Uncommon","Rare","Epic","Legendary","Mythical","Cosmic","Secret","Celestial","Divine","Infinity" },
+    Multi = true,
+    Default = {},
+    Callback = function(selected)
+        state.BrainrotSet = {}
+        for _, v in ipairs(selected) do state.BrainrotSet[tostring(v)] = true end
+    end
+})
+
+-- Lucky Block filter
+AutoTradeTab:Dropdown({
+    Title = "Lucky Block Rarity Filter",
+    Description = "Multi-select (empty = ignore lucky blocks)",
+    Values = state.RARITIES or { "Common","Uncommon","Rare","Epic","Legendary","Mythical","Cosmic","Secret","Celestial","Divine","Infinity" },
+    Multi = true,
+    Default = {},
+    Callback = function(selected)
+        state.LuckySet = {}
+        for _, v in ipairs(selected) do state.LuckySet[tostring(v)] = true end
+    end
+})
+
+-- Auto Gift toggle (wrapped)
+createToggle(AutoTradeTab, {
+    Title = "Auto Gift",
+    Description = "Send gifts repeatedly using first valid item",
+    Default = false,
+    Callback = function(v)
+        state.AutoGift = v
+
+        if v then
+            if not state.TargetPlayer then
+                state.WindUI:Notify({ Title = "Auto Gift", Content = "Please select a target player first", Duration = 2 })
+                state.AutoGift = false
+                return
+            end
+
+            if state.AutoGiftTask then return end
+
+            state.AutoGiftTask = task.spawn(function()
+                state.WindUI:Notify({ Title = "Auto Gift", Content = "Started", Duration = 1.2 })
+
+                while state.AutoGift do
+                    local items = collectItemsForTrade()
+                    if #items > 0 then
+                        local ok, res = performSingleGift(state.TargetPlayer, items[1])
+                        state.WindUI:Notify({ Title = "Auto Gift", Content = ok and ("Gift sent: " .. items[1].uuid) or ("Gift failed: " .. tostring(res)), Duration = 1.4 })
+                    else
+                        state.WindUI:Notify({ Title = "Auto Gift", Content = "No matching items found", Duration = 1.6 })
+                    end
+                    task.wait(1.25)
+                end
+
+                state.AutoGiftTask = nil
+            end)
+        else
+            if state.AutoGiftTask then
+                task.cancel(state.AutoGiftTask)
+                state.AutoGiftTask = nil
+            end
+            state.WindUI:Notify({ Title = "Auto Gift", Content = "Stopped", Duration = 1.2 })
+        end
+    end
+}, "AutoGift")
+
+-- Auto Trade toggle (wrapped)
+createToggle(AutoTradeTab, {
+    Title = "Auto Trade Loop",
+    Description = "Automatically trade selected items repeatedly",
+    Default = false,
+    Callback = function(v)
+        state.AutoTrade = v
+
+        if v then
+            if not state.TargetPlayer then
+                state.WindUI:Notify({ Title = "Auto Trade", Content = "Please select a target player first", Duration = 2 })
+                state.AutoTrade = false
+                return
+            end
+
+            if state.AutoTradeTask then return end
+
+            state.AutoTradeTask = task.spawn(function()
+                state.WindUI:Notify({ Title = "Auto Trade", Content = "Started", Duration = 1.2 })
+
+                while state.AutoTrade do
+                    local ok, info = performTradeIteration(state.TargetPlayer)
+                    state.WindUI:Notify({ Title = "Auto Trade", Content = ok and ("Trade completed (" .. info .. " slots)") or ("Skipped: " .. tostring(info)), Duration = 1.6 })
+                    task.wait(state.LOOP_DELAY or 2.0)
+                end
+
+                state.AutoTradeTask = nil
+                state.WindUI:Notify({ Title = "Auto Trade", Content = "Stopped", Duration = 1.2 })
+            end)
+        else
+            if state.AutoTradeTask then
+                task.cancel(state.AutoTradeTask)
+                state.AutoTradeTask = nil
+            end
+            state.WindUI:Notify({ Title = "Auto Trade", Content = "Disabled", Duration = 1.2 })
+        end
+    end
+}, "AutoTrade")
+
+-- MISC TAB
+local MiscTab = Window:Tab({ Title = "Misc", Icon = "sparkles" })
+MiscTab:Section({ Title = "I dont know but i know u need this features" })
+
+createToggle(MiscTab, { Title = "Instant Grab", Callback = function(v) if v then enableInstantGrab() else disableInstantGrab() end end }, "InstantGrabEnabled")
+createToggle(MiscTab, { Title = "Infinite Zoom Out", Callback = function(v) if v then enableInfiniteZoom() else disableInfiniteZoom() end end }, "InfiniteZoomEnabled")
+createToggle(MiscTab, { Title = "Infinite Jump", Callback = function(v) if v then enableInfiniteJump() else disableInfiniteJump() end end}, "InfiniteJumpEnabled")
+----------------------------------------------------------------
+-- CONFIG TAB (Cloud Config Manager)
+----------------------------------------------------------------
+local ConfigTab = Window:Tab({
+    Title = "Config",
+    Icon = "database"
+})
+
+ConfigTab:Section({ Title = "Cloud Configuration" })
+
+ConfigTab:Button({
+    Title = "💾 Save Cloud Config",
+    Description = "Save current configuration to cloud",
+    Callback = function()
+        local ok = saveConfigOnline()
+        if ok then
+            state.WindUI:Notify({
+                Title = "Cloud Save",
+                Content = "Configuration saved successfully.",
+                Duration = 3
+            })
+        else
+            state.WindUI:Notify({
+                Title = "Cloud Save",
+                Content = "Failed to save configuration.",
+                Duration = 3
+            })
+        end
+    end
+})
+
+ConfigTab:Button({
+    Title = "📥 Load Cloud Config",
+    Description = "Load configuration from cloud",
+    Callback = function()
+        local ok = loadConfigOnline()
+        if not ok then
+            state.WindUI:Notify({
+                Title = "Cloud Load",
+                Content = "No config found or load failed.",
+                Duration = 4
+            })
+        end
+    end
+})
+
+ConfigTab:Button({
+    Title = "🗑 Delete Cloud Config",
+    Description = "Delete your cloud configuration permanently",
+    Callback = function()
+        local ok = deleteConfigOnline()
+        if ok then
+            state.WindUI:Notify({
+                Title = "Cloud Delete",
+                Content = "Cloud configuration deleted.",
+                Duration = 3
+            })
+        else
+            state.WindUI:Notify({
+                Title = "Cloud Delete",
+                Content = "Failed to delete config.",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- initial cloud load (kept)
+task.spawn(function()
+    task.wait(1.5)
+    loadConfigOnline(userId)
 end)
 
 -- READY
-state.WindUI:Notify({ Title="HexaCore Hub Loaded", Content="Auto Run + Respawn + Manual Override FIXED", Duration=4 })
-
+state.WindUI:Notify({ Title = "HexaCore Hub", Content = "Loaded and ready.", Duration = 4 })
