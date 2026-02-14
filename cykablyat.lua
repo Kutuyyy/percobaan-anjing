@@ -2,7 +2,7 @@
 -- FRENESIS x HexaCore HUB (FINAL COMPLETE + AUTO RUN)
 -- Reworked: semua variabel stateful dimasukkan ke `local state = {}` untuk mengurangi usage local registers
 -- Struktur dirapikan: helpers / listeners / loops / platform builder / UI tetap sama alurnya
-local DEBUG = true   -- true = console aktif | false = silent
+local DEBUG = false   -- true = console aktif | false = silent
 
 do
     local _print = print
@@ -85,6 +85,8 @@ local TweenService = game:GetService("TweenService") -- needed for platform buil
 local HttpService = game:GetService("HttpService")
 local userId = tostring(Players.LocalPlayer.UserId)
 
+
+
 --Config save/load
 local FIREBASE_URL = "https://hexacore-5455a-default-rtdb.asia-southeast1.firebasedatabase.app"
 local GAME_NAME = "Escape Tsunami For Brainrot"
@@ -126,7 +128,8 @@ end
 local SAVABLE_KEYS = {
     "AutoCollect","AutoUpgrade","AutoBuySpeed","AutoRebirth","AutoBuyCarry",
     "AutoCollectRadioactive","AutoCollectUFO","AutoCollectGoldBar",
-    "AutoCollectTicket","AutoCollectGamer",
+    "AutoCollectTicket","AutoCollectGamer","AutoCollectArcade","AutoCollectValentine",
+    "CollectCoins","ActivateCollectCoin",
     "AutoSpinRadioactive","AutoSpinUFO","AutoSpinGoldBar",
     "AutoCollectTarget","AutoRunEnabled",
     "InstantGrabEnabled","InfiniteJumpEnabled","InfiniteZoomEnabled",
@@ -185,6 +188,34 @@ local function applyLoadedConfig(data)
             state[k] = data[k]
         end
     end
+
+    -- BACKWARD-COMPAT: jika config lama punya flags per-coin, convert ke CollectCoins
+    if data.AutoCollectRadioactive or data.AutoCollectUFO or data.AutoCollectGoldBar
+       or data.AutoCollectTicket or data.AutoCollectGamer or data.AutoCollectValentine then
+        state.CollectCoins = state.CollectCoins or {}
+        if data.AutoCollectRadioactive then state.CollectCoins["Radioactive Coin"] = true end
+        if data.AutoCollectUFO       then state.CollectCoins["UFO Coin"] = true end
+        if data.AutoCollectGoldBar   then state.CollectCoins["Gold Bar"] = true end
+        -- arcade: ticket + game console (old keys might be Ticket / Gamer toggles)
+        if data.AutoCollectTicket or data.AutoCollectGamer or data.AutoCollectArcade then
+            state.CollectCoins["Arcade"] = true
+        end
+        -- valentine
+        if data.AutoCollectValentine then state.CollectCoins["Valentine"] = true end
+
+        -- if any old flag was true, enable ActivateCollectCoin to preserve behaviour
+        state.ActivateCollectCoin = state.ActivateCollectCoin or (
+            data.AutoCollectRadioactive or data.AutoCollectUFO or data.AutoCollectGoldBar
+            or data.AutoCollectTicket or data.AutoCollectGamer or data.AutoCollectValentine
+            or data.AutoCollectArcade
+        )
+    end
+
+    -- If config has CollectCoins table saved directly, keep as is (already set above by SAVABLE_KEYS loop)
+    if data.CollectCoins and type(data.CollectCoins) == "table" then
+        state.CollectCoins = data.CollectCoins
+    end
+    if data.ActivateCollectCoin ~= nil then state.ActivateCollectCoin = data.ActivateCollectCoin end
 
     --------------------------------------------------
     -- RESTORE VECTOR POSITIONS
@@ -338,6 +369,15 @@ local function applyLoadedConfig(data)
             return
         end
 
+        if k == "CollectCoins" and el then
+            local selected = {}
+            for name, enabled in pairs(state.CollectCoins or {}) do
+                if enabled then table.insert(selected, name) end
+            end
+            safeSetUIElement(el, selected)
+            return
+        end
+
         -- dropdown lucky block
         if k == "LuckyBlockTargets" and el then
             local list = {}
@@ -357,7 +397,8 @@ local function applyLoadedConfig(data)
         "AutoCollect","AutoUpgrade","AutoBuySpeed","AutoRebirth","AutoBuyCarry",
         "platformEnabled","AutoCollectTarget","AutoRunEnabled",
         "AutoCollectRadioactive","AutoCollectUFO","AutoCollectGoldBar",
-        "AutoCollectTicket","AutoCollectGamer",
+        "AutoCollectTicket","AutoCollectGamer","AutoCollectArcade","AutoCollectValentine",
+        "CollectCoins","ActivateCollectCoin",
         "InstantGrabEnabled","InfiniteJumpEnabled","InfiniteZoomEnabled",
         "BypassVIP","NoClipEnabled","AutoObbyGoldEnabled",
         "selectedRarities","LuckyBlockTargets",
@@ -540,6 +581,7 @@ state.AutoCollectUFO = false
 state.AutoSpinRadioactive = false
 state.AutoSpinUFO = false
 state.AutoSpinGoldBar = false
+state.AutoCollectValentine = false
 
 -- misc features
 state.InstantGrabEnabled = false
@@ -654,24 +696,42 @@ state.platformParts = {}
 state.wallParts = {}
 
 state.OpenBlockState = { chosenTypes = {} }
-
-state.AutoCollectTicket = false
-state.AutoCollectGamer = false
+state.AutoCollectArcade = false
 
 state.coinCache = {
     ["Radioactive Coin"] = {},
     ["UFO Coin"] = {},
     ["GoldBar"] = {},
     ["Ticket"] = {},
-    ["Game Console"] = {}
+    ["Game Console"] = {},
+    -- Valentine / Event
+    ["HeartCandy1"] = {},
+    ["HeartCandy2"] = {},
+    ["HeartCandy3"] = {},
+    ["lovetoken"] = {}
 }
 state.cachePointers = {
     ["Radioactive Coin"] = 1,
     ["UFO Coin"] = 1,
     ["GoldBar"] = 1,
     ["Ticket"] = 1,
-    ["Game Console"] = 1
+    ["Game Console"] = 1,
+    -- Valentine pointers
+    ["HeartCandy1"] = 1,
+    ["HeartCandy2"] = 1,
+    ["HeartCandy3"] = 1,
+    ["lovetoken"] = 1
 }
+
+-- Collect Coins (new unified dropdown)
+state.CollectCoins = state.CollectCoins or {
+    ["Radioactive Coin"] = false,
+    ["UFO Coin"] = false,
+    ["Gold Bar"] = false,
+    ["Arcade"] = false,
+    ["Valentine"] = false
+}
+state.ActivateCollectCoin = state.ActivateCollectCoin or false
 
 -- obby gold
 state.AutoObbyGoldEnabled = false
@@ -707,7 +767,7 @@ state.AutoTrade = false
 state.AutoTradeTask = nil
 
 -- timing / slot configs (default values sesuai script2)
-state.MAX_SLOTS = 9
+state.MAX_SLOTS = 6
 state.SEND_TRADE_WAIT = 5.0   -- waktu tunggu setelah SendTrade sebelum mulai fill slots
 state.POST_FILL_WAIT = 4.0    -- waktu tunggu setelah fill slots sebelum tekan Accept
 state.POST_ACCEPT_WAIT = 5.0  -- waktu tunggu setelah tekan Accept sebelum loop berikutnya
@@ -1114,8 +1174,8 @@ SellState.BRAINROT_LISTS = {
         "Darlungini Pandanneli","Vroosh Boosh","Nuclearo Dinossauro","La Grande Combinasion",
         "Garama and Madundung","Dragon Cannelloni","Chimpanzini Spiderini","Agarrini la Palini",
         "Las Vaquitas Saturnitas","Graipuss Medussi","Torrtuginni Dragonfrutini",
-        "Los Tralaleritos","La Vacca Saturno Saturnita","Pot Hotspot",
-        "Las Tralaleritas","Chicleteira Bicicleteira"
+        "Los Tralaleritos","La Vacca Saturno Saturnita","Pot Hotspot","Las Tralaleritas",
+        "Chicleteira Bicicleteira"
     },
     Epic = { 
         "Blueberrinni Octopussini","Ballerina Cappuccina","Burbaloni Luliloli",
@@ -1130,8 +1190,8 @@ SellState.BRAINROT_LISTS = {
         "Bombombini Gusini","Bombardiro Crocodilo","Avocadorilla","Cavallo Virtuoso"
     },
     Mythical = { 
-        "Ballerino Lololo","Cocofanto Elefanto","Los Crocodillitos","Piccione Macchina",
-        "Tigroligre Frutonni","Trenostruzzo Turbo 3000",
+        "Ballerino Lololo","Cocofanto Elefanto","Los Crocodillitos",
+        "Piccione Macchina","Tigroligre Frutonni","Trenostruzzo Turbo 3000",
         "Trippi Troppi Troppa Trippa","Tukanno Bananno","Udin Din Din Dun",
         "Orcalero Orcala","Giraffa Celeste","Tralalero Tralala"
     },
@@ -1141,18 +1201,18 @@ SellState.BRAINROT_LISTS = {
         "Bananita Dolphinita","Bambini Crostini","Brr Brr Patapim","Avocadini Guffo"
     },
     Secret = { 
-        "Bambooini Bombini","Eek Eek Eek Sahur","Rainbow 67",
+        "Bambooini Bombini","Eek Eek Eek Sahur","Marietti Frigo",
         "La Vacca Black Hole Goat","Fragola La La La","Aura Farma",
         "Los Tungtungtungcitos","Los Combinasionas","Espresso Signora",
         "Unclito Samito","Gattatino Neonino","Gatattino Donutino",
         "Statutino Libertino","Capybara Monitora","Tractoro Dinosauro",
-        "Mastodontico Telepiedone","Patatino Astronauta","Matteo",
-        "Patito Dinerito","Onionello Penguini"
+        "Mastodontico Telepiedone","Patatino Astronauta","Matteo","Patito Dinerito",
+        "Onionello Penguini","Sausaggini Sanitario","Rainbow 67"
     },
     Uncommon = { 
         "Trippi Troppi","Tric Tric Baraboom","Ta Ta Ta Sahur","Pipi Avocado",
-        "Gangster Footera","Cacto Hipopotamo","Boneca Ambalabu",
-        "Bobrito Bandito","67"
+        "Gangster Footera","Cacto Hipopotamo","Boneca Ambalabu","Bobrito Bandito",
+        "67"
     },
     Common = { 
         "Tim Cheese","Talpa Di Fero","Svinino Bombondino","Pipi Kiwi",
@@ -1160,9 +1220,13 @@ SellState.BRAINROT_LISTS = {
     },
     Divine = { 
         "Strawberry Elephant","Burgerini Bearini","Bulbito Bandito Traktorito",
-        "Martino Gravitino","Galactio Fantasma","Din Din Vaultero","Grappellino D'Oro"
+        "Martino Gravitino","Galactio Fantasma","Din Din Vaultero","Grappellino D'Oro",
+        "Rubichetto Cubini","Glacierello Infernetti","Freezeti Cobretti"
     },
-    Infinity = { "Noobini Infeeny" }
+    Infinity = { 
+        "Noobini Infeeny","Meta Technetta","Biscotti Macarotti",
+        "Cioccolatone Draghettone","Tartarughi Attrezzini","Kissarini Heartini",
+        "Polpo Semaforini","Cupitron Consoletron","Anububu","Gatti Marshmallini" }
 }
 
 local function buildLookups()
@@ -1357,7 +1421,7 @@ local function performTradeIteration(target)
     -- tunggu sebelum mulai mengisi slot (biarkan server buka trade window)
     task.wait(tonumber(state.SEND_TRADE_WAIT) or 5.0)
 
-    local toFill = math.min(#items, tonumber(state.MAX_SLOTS) or 9)
+    local toFill = math.min(#items, tonumber(state.MAX_SLOTS) or 6)
     local filled = 0
     for slot = 1, toFill do
         local entry = items[slot]
@@ -1367,7 +1431,7 @@ local function performTradeIteration(target)
                 state.SetSlotOfferRF:InvokeServer(tostring(slot), tostring(entry.uuid))
             end)
             filled = filled + 1
-            task.wait(0.2)
+            task.wait(0.12)
         end
     end
 
@@ -1690,35 +1754,66 @@ end
 local PROCESS_PER_TYPE = 12
 local DISTANCE_THRESHOLD = 5000 -- distance max untuk auto collect coin
 
+local function isCoinEnabled(group)
+    if not state.ActivateCollectCoin then return false end
+    return state.CollectCoins and state.CollectCoins[group]
+end
+
 RunService.Heartbeat:Connect(function()
-    if not (state.AutoCollectRadioactive or state.AutoCollectUFO or state.AutoCollectGoldBar) then return end
+
+    if not state.ActivateCollectCoin then return end
+
     local hrp = getRoot()
     if not hrp then return end
+
     for coinName, cache in pairs(state.coinCache) do
-        local enabled = (coinName == "Radioactive Coin" and state.AutoCollectRadioactive)
-                     or (coinName == "UFO Coin" and state.AutoCollectUFO)
-                     or (coinName == "GoldBar" and state.AutoCollectGoldBar)
-                     or (coinName == "Ticket" and state.AutoCollectTicket)
-                     or (coinName == "Game Console" and state.AutoCollectGamer)
+
+        local enabled = false
+
+        if coinName == "Radioactive Coin" then
+            enabled = isCoinEnabled("Radioactive Coin")
+
+        elseif coinName == "UFO Coin" then
+            enabled = isCoinEnabled("UFO Coin")
+
+        elseif coinName == "GoldBar" then
+            enabled = isCoinEnabled("Gold Bar")
+
+        elseif coinName == "Ticket" or coinName == "Game Console" then
+            enabled = isCoinEnabled("Arcade")
+
+        elseif coinName == "HeartCandy1"
+            or coinName == "HeartCandy2"
+            or coinName == "HeartCandy3"
+            or coinName == "lovetoken" then
+            enabled = isCoinEnabled("Valentine")
+        end
+
         if enabled and #cache > 0 then
             local ptr = state.cachePointers[coinName] or 1
             local toProcess = math.min(PROCESS_PER_TYPE, #cache)
+
             for i = 1, toProcess do
                 if #cache == 0 then break end
                 if ptr > #cache then ptr = 1 end
+
                 local part = cache[ptr]
+
                 if not part or not part.Parent then
                     table.remove(cache, ptr)
                 else
                     local dist = (part.Position - hrp.Position).Magnitude
                     if dist <= DISTANCE_THRESHOLD then
                         local offset = CFrame.new(math.random(-2,2), 0.5, math.random(-2,2))
-                        pcall(function() part.CFrame = hrp.CFrame * offset end)
+                        pcall(function()
+                            part.CFrame = hrp.CFrame * offset
+                        end)
                     end
-                    ptr = ptr + 1
+                    ptr += 1
                 end
             end
-            state.cachePointers[coinName] = (ptr > 0 and ptr) or 1
+
+            state.cachePointers[coinName] = ptr
         end
     end
 end)
@@ -3950,11 +4045,59 @@ createToggle(EventTab, {
 
 EventTab:Section({ Title = "Event Collect Coins" })
 
-createToggle(EventTab, { Title = "Collect Radioactive Coin", Callback = function(v) state.AutoCollectRadioactive = v end }, "AutoCollectRadioactive")
-createToggle(EventTab, { Title = "Collect UFO Coin", Callback = function(v) state.AutoCollectUFO = v end }, "AutoCollectUFO")
-createToggle(EventTab, { Title = "Collect Gold Bar", Callback = function(v) state.AutoCollectGoldBar = v end }, "AutoCollectGoldBar")
-createToggle(EventTab, { Title = "Collect Ticket", Callback = function(v) state.AutoCollectTicket = v end }, "AutoCollectTicket")
-createToggle(EventTab, { Title = "Collect Gamer", Callback = function(v) state.AutoCollectGamer = v end }, "AutoCollectGamer")
+local COIN_OPTIONS = {
+    "Radioactive Coin",
+    "UFO Coin",
+    "Gold Bar",
+    "Arcade",
+    "Valentine"
+}
+
+-- 🔥 FIXED: SIMPAN KE VARIABEL
+local CoinDropdown = EventTab:Dropdown({
+    Title = "Select Coin",
+    Values = COIN_OPTIONS,
+    Multi = true,
+    Value = (function()
+        local selected = {}
+        for name, enabled in pairs(state.CollectCoins or {}) do
+            if enabled then
+                table.insert(selected, name)
+            end
+        end
+        return selected
+    end)(),
+    Callback = function(selectedList)
+        state.CollectCoins = {}
+        for _, v in ipairs(selectedList) do
+            state.CollectCoins[tostring(v)] = true
+        end
+        state.WindUI:Notify({
+            Title = "Select Coin",
+            Content = "Updated.",
+            Duration = 1.5
+        })
+    end
+})
+
+-- simpan reference supaya bisa sync saat load config
+state.UI_ELEMENTS = state.UI_ELEMENTS or {}
+state.UI_ELEMENTS["CollectCoins"] = CoinDropdown
+
+-- Toggle Activation
+createToggle(EventTab, {
+    Title = "Activate Collect Coin",
+    Description = "Enable coin collection from selected coins",
+    Default = state.ActivateCollectCoin,
+    Callback = function(v)
+        state.ActivateCollectCoin = v
+        state.WindUI:Notify({
+            Title = "Collect Coin",
+            Content = v and "Activated" or "Deactivated",
+            Duration = 2
+        })
+    end
+}, "ActivateCollectCoin")
 
 EventTab:Section({ Title = "Auto Spin Wheel" })
 createToggle(EventTab, { Title = "Auto Spin Radioactive", Callback = function(v) state.AutoSpinRadioactive = v end }, "AutoSpinRadioactive")
